@@ -8397,6 +8397,11 @@ class SchedulerApp(tk.Tk):
         self.brand_img_header = None
         self.brand_img_store = None
         self.brand_source_image = None
+        self._store_img_original = None
+        self._store_img_tk = None
+        self._store_img_label = None
+        self._store_img_container = None
+        self._store_img_last_size: Optional[Tuple[int, int]] = None
         self._brand_tab_photo_refs: Dict[str, Any] = {}
         self._brand_tab_last_size: Dict[str, Tuple[int, int]] = {}
         self._load_brand_images()
@@ -8612,6 +8617,52 @@ class SchedulerApp(tk.Tk):
             return lbl
         except Exception:
             return None
+
+    def _load_store_tab_image(self):
+        self._store_img_original = None
+        if Image is None or ImageTk is None:
+            return
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = [
+                os.path.join(base_dir, "assets", "petroserve.png"),
+                os.path.join(base_dir, "petroserve.png"),
+            ]
+            img_path = next((p for p in candidates if os.path.isfile(p)), None)
+            if not img_path:
+                return
+            with Image.open(img_path) as img:
+                self._store_img_original = img.copy()
+        except Exception:
+            self._store_img_original = None
+
+    def _resize_store_tab_image(self, event=None):
+        try:
+            if self._store_img_original is None or self._store_img_label is None or self._store_img_container is None:
+                return
+            c_w = int(self._store_img_container.winfo_width())
+            c_h = int(self._store_img_container.winfo_height())
+            if c_w < 40 or c_h < 40:
+                return
+            src_w, src_h = self._store_img_original.size
+            if src_w <= 0 or src_h <= 0:
+                return
+
+            scale = min(float(c_w) / float(src_w), float(c_h) / float(src_h))
+            if scale <= 0:
+                return
+
+            dst_w = max(1, min(int(src_w * scale), 1800))
+            dst_h = max(1, min(int(src_h * scale), 1800))
+            if self._store_img_last_size == (dst_w, dst_h):
+                return
+
+            resized = self._store_img_original.resize((dst_w, dst_h), Image.LANCZOS)
+            self._store_img_tk = ImageTk.PhotoImage(resized)
+            self._store_img_label.configure(image=self._store_img_tk)
+            self._store_img_last_size = (dst_w, dst_h)
+        except Exception:
+            pass
 
     def _setup_style(self):
         style = ttk.Style(self)
@@ -8922,8 +8973,8 @@ class SchedulerApp(tk.Tk):
         ttk.Label(frm, text="Store Info prints on schedules.", style="SubHeader.TLabel").pack(anchor="w", pady=(0,8))
 
         top = ttk.Frame(frm, style="Section.TFrame"); top.pack(fill="x", expand=False, pady=10)
-        left = ttk.Frame(top, style="Section.TFrame"); left.pack(side="left", fill="x", expand=True)
-        right = ttk.Frame(top, style="Section.TFrame"); right.pack(side="right", padx=(10,0))
+        left = ttk.Frame(top, style="Section.TFrame"); left.pack(side="left", fill="both", expand=True)
+        right = ttk.Frame(top, style="Section.TFrame"); right.pack(side="right", fill="both", expand=True, padx=(12,0))
 
         box = ttk.LabelFrame(left, text="Store", style="Panel.TLabelframe")
         box.pack(fill="x")
@@ -9033,7 +9084,14 @@ class SchedulerApp(tk.Tk):
             style="SubHeader.TLabel",
         ).grid(row=len(peak_rows)+1, column=0, columnspan=7, padx=8, pady=(6,4), sticky="w")
 
-        self._attach_tab_brand_panel(right, slot_key="store_tab_brand", min_w=180, max_w=320, min_h=100, max_h=220, rel_w=0.95, rel_h=0.90)
+        self._store_img_container = ttk.Frame(right, style="Panel.TFrame")
+        self._store_img_container.pack(fill="both", expand=True, padx=(10, 12), pady=(10, 10))
+        self._store_img_label = ttk.Label(self._store_img_container)
+        self._store_img_label.pack(expand=True)
+        self._store_img_last_size = None
+        self._load_store_tab_image()
+        self._store_img_container.bind("<Configure>", self._resize_store_tab_image, add="+")
+        self.after_idle(self._resize_store_tab_image)
 
         ttk.Button(frm, text="Save Store Info", command=self.save_store_info).pack(anchor="w", padx=6, pady=10)
 
