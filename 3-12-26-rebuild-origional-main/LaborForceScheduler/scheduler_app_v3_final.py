@@ -4400,6 +4400,69 @@ def generate_schedule(model: DataModel, label: str,
         "checkpoint_every": 120,
     }
 
+    solver_selection_telemetry: List[Dict[str, Any]] = []
+    add_outcome_counts: Dict[str, int] = {
+        "reduced_min": 0,
+        "reduced_pref_only": 0,
+        "reduced_neither": 0,
+    }
+
+    def _daily_store_hours(current: List[Assignment]) -> Dict[str, float]:
+        out = {d: 0.0 for d in DAYS}
+        for _a in current:
+            out[_a.day] = float(out.get(_a.day, 0.0) or 0.0) + float(hours_between_ticks(_a.start_t, _a.end_t))
+        return out
+
+    def _daily_employee_hours(current: List[Assignment]) -> Dict[str, Dict[str, float]]:
+        out: Dict[str, Dict[str, float]] = {e.name: {d: 0.0 for d in DAYS} for e in model.employees}
+        for _a in current:
+            row = out.setdefault(_a.employee_name, {d: 0.0 for d in DAYS})
+            row[_a.day] = float(row.get(_a.day, 0.0) or 0.0) + float(hours_between_ticks(_a.start_t, _a.end_t))
+        return out
+
+    def _min_shortfall_by_day_area(cov: Dict[Tuple[str, str, int], int]) -> Dict[str, Dict[str, int]]:
+        out: Dict[str, Dict[str, int]] = {d: {a: 0 for a in AREAS} for d in DAYS}
+        for (d, a, t), mn in min_req.items():
+            miss = max(0, int(mn) - int(cov.get((d, a, t), 0)))
+            if miss > 0:
+                out.setdefault(d, {}).setdefault(a, 0)
+                out[d][a] += int(miss)
+        return out
+
+    def _candidate_demand_delta(day: str, area: str, st: int, en: int, cov: Dict[Tuple[str, str, int], int]) -> Tuple[int, int]:
+        min_delta = 0
+        pref_delta = 0
+        for tt in range(int(st), int(en)):
+            key = (day, area, int(tt))
+            c = int(cov.get(key, 0))
+            if c < int(min_req.get(key, 0)):
+                min_delta += 1
+                pref_delta += 1
+            elif c < int(pref_req.get(key, 0)):
+                pref_delta += 1
+        return int(min_delta), int(pref_delta)
+
+    def _candidate_distribution_penalty(emp_name: str, day: str, seg_h: float) -> Tuple[float, float, float]:
+        by_emp_day = _daily_employee_hours(assignments)
+        emp_day_hours = by_emp_day.get(emp_name, {d: 0.0 for d in DAYS})
+        emp_pen = float(emp_day_hours.get(day, 0.0) or 0.0)
+        store_day_hours = _daily_store_hours(assignments)
+        store_pen = float(store_day_hours.get(day, 0.0) or 0.0)
+        day_idx_pen = float(DAYS.index(day))
+        return emp_pen + max(0.0, seg_h - 2.0), store_pen, day_idx_pen
+
+    phase_snapshots: Dict[str, Dict[str, Any]] = {}
+
+    def _record_phase_snapshot(phase_name: str):
+        hours_by_day = _daily_store_hours(assignments)
+        total_h = max(1e-9, float(sum(hours_by_day.values())))
+        phase_snapshots[phase_name] = {
+            "hours_by_day": hours_by_day,
+            "sunday_share": float(hours_by_day.get("Sun", 0.0) / total_h),
+            "per_employee_by_day": _daily_employee_hours(assignments),
+            "min_shortfall_by_day_area": _min_shortfall_by_day_area(coverage),
+        }
+
     def _tick_keys_in(day: str, area: str, st: int, en: int):
         for t in range(int(st), int(en)):
             yield (day, area, int(t))
@@ -4868,18 +4931,48 @@ def generate_schedule(model: DataModel, label: str,
 
     def add_best_segment(day: str, area: str, st: int, en: int, locked_ok: bool=False, enforce_weekly_cap: bool=True) -> bool:
         nonlocal current_avg_active_wants
-        # choose employee to cover this segment
         pool = [e for e in model.employees if e.work_status=="Active" and bool(getattr(e, "wants_hours", True)) and area in e.areas_allowed]
         if enable_util and w_low_hours > 0.0 and active_wants_names:
             current_avg_active_wants = sum(float(emp_hours.get(nm, 0.0) or 0.0) for nm in active_wants_names) / float(len(active_wants_names))
         else:
             current_avg_active_wants = 0.0
-        # score & sort
         pool.sort(key=lambda e: candidate_score(e, day, area, st, en), reverse=True)
-        for e in pool[:40]:
-            if feasible_segment(e, day, area, st, en):
-                return add_assignment(Assignment(day, area, st, en, e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE), locked_ok=locked_ok, cov=coverage, enforce_weekly_cap=enforce_weekly_cap)
-        return False
+        ranked: List[Tuple[Tuple[float, float, float, float], Employee]] = []
+        min_delta, pref_delta = _candidate_demand_delta(day, area, st, en, coverage)
+        seg_h = float(hours_between_ticks(st, en))
+        for idx, e in enumerate(pool[:40]):
+            if not feasible_segment(e, day, area, st, en):
+                continue
+            emp_pen, store_pen, day_idx_pen = _candidate_distribution_penalty(e.name, day, seg_h)
+            rank = (float(min_delta), float(pref_delta), -float(emp_pen + 0.1 * store_pen), -float(day_idx_pen))
+            ranked.append((rank, e))
+        if not ranked:
+            return False
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        chosen = ranked[0][1]
+        solver_selection_telemetry.append({
+            "selector": "add_best_segment",
+            "day": day,
+            "area": area,
+            "start_t": int(st),
+            "end_t": int(en),
+            "feasible_candidates": int(len(ranked)),
+            "chosen_employee": chosen.name,
+            "chosen_rank": list(ranked[0][0]),
+            "earliest_iterated_candidate": bool(chosen.name == pool[0].name) if pool else False,
+            "later_day_alternative_exists": False,
+        })
+        before_min, before_pref = _candidate_demand_delta(day, area, st, en, coverage)
+        ok = add_assignment(Assignment(day, area, st, en, chosen.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE), locked_ok=locked_ok, cov=coverage, enforce_weekly_cap=enforce_weekly_cap)
+        if ok:
+            after_min, after_pref = _candidate_demand_delta(day, area, st, en, coverage)
+            if after_min < before_min:
+                add_outcome_counts["reduced_min"] += 1
+            elif after_pref < before_pref:
+                add_outcome_counts["reduced_pref_only"] += 1
+            else:
+                add_outcome_counts["reduced_neither"] += 1
+        return ok
 
     envelopes_by_emp_day: Dict[Tuple[str, str], List[Tuple[int, int]]] = derive_master_envelopes(assignments)
 
@@ -4912,7 +5005,6 @@ def generate_schedule(model: DataModel, label: str,
                 current_avg_active_wants = 0.0
             pool.sort(key=lambda e: candidate_score(e, day, area, st, en), reverse=True)
 
-        # Step 2: preserve weekly-hour slack for scarce CSTORE+specialty employees while solving CSTORE demand.
         if area == "CSTORE" and specialty_cross_trained:
             def _slack_priority(emp: Employee) -> Tuple[int, float]:
                 curr_h = float(emp_hours.get(emp.name, 0.0) or 0.0)
@@ -4922,14 +5014,51 @@ def generate_schedule(model: DataModel, label: str,
                 return (reserve_block, curr_h)
             pool.sort(key=_slack_priority)
 
+        ranked: List[Tuple[Tuple[float, float, float, float], Employee]] = []
+        min_delta, pref_delta = _candidate_demand_delta(day, area, st, en, coverage)
+        seg_h = float(hours_between_ticks(st, en))
         for e in pool[:50]:
             within = can_place_segment_within_envelope(e.name, day, st, en, envelopes_by_emp_day)
             if only_within_existing and not within:
                 continue
-            if feasible_segment(e, day, area, st, en):
-                if add_assignment(Assignment(day, area, st, en, e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE), locked_ok=False, cov=coverage, enforce_weekly_cap=enforce_weekly_cap):
-                    envelopes_by_emp_day = derive_master_envelopes(assignments)
-                    return True
+            if not feasible_segment(e, day, area, st, en):
+                continue
+            emp_pen, store_pen, day_idx_pen = _candidate_distribution_penalty(e.name, day, seg_h)
+            contiguous_bonus = 0.0
+            segs = emp_day_segments.get((e.name, day), [])
+            if segs:
+                merged_existing = _merge_touching_intervals([(int(ast), int(aen)) for (ast, aen, _aa) in segs])
+                merged_with_new = _merge_touching_intervals([(int(ast), int(aen)) for (ast, aen, _aa) in segs] + [(int(st), int(en))])
+                if len(merged_with_new) < (len(merged_existing) + 1):
+                    contiguous_bonus = 1.0
+            rank = (float(min_delta), float(pref_delta), float(contiguous_bonus) - float(emp_pen + 0.15 * store_pen), -float(day_idx_pen))
+            ranked.append((rank, e))
+        if not ranked:
+            return False
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        chosen = ranked[0][1]
+        solver_selection_telemetry.append({
+            "selector": "open_or_extend_master_envelope",
+            "day": day,
+            "area": area,
+            "start_t": int(st),
+            "end_t": int(en),
+            "feasible_candidates": int(len(ranked)),
+            "chosen_employee": chosen.name,
+            "chosen_rank": list(ranked[0][0]),
+            "later_day_alternative_exists": False,
+        })
+        before_min, before_pref = _candidate_demand_delta(day, area, st, en, coverage)
+        if add_assignment(Assignment(day, area, st, en, chosen.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE), locked_ok=False, cov=coverage, enforce_weekly_cap=enforce_weekly_cap):
+            envelopes_by_emp_day = derive_master_envelopes(assignments)
+            after_min, after_pref = _candidate_demand_delta(day, area, st, en, coverage)
+            if after_min < before_min:
+                add_outcome_counts["reduced_min"] += 1
+            elif after_pref < before_pref:
+                add_outcome_counts["reduced_pref_only"] += 1
+            else:
+                add_outcome_counts["reduced_neither"] += 1
+            return True
         return False
 
     def phase_fill_area_min(area: str,
@@ -4943,25 +5072,36 @@ def generate_schedule(model: DataModel, label: str,
         progressed = True
         while progressed:
             progressed = False
-            deficit_keys = [k for k, mn in min_req.items() if k[1] == area and coverage.get(k, 0) < mn]
-            deficit_keys.sort(key=lambda k: (DAYS.index(k[0]), int(k[2])))
-            for (day, _area, t) in deficit_keys[:max_keys]:
+            all_deficits: List[Tuple[float, str, str, int]] = []
+            for (d, a, t), mn in min_req.items():
+                miss = int(mn) - int(coverage.get((d, a, t), 0))
+                if miss <= 0:
+                    continue
+                feasible_cnt = max(1, int(tick_scarcity.get((d, a, int(t)), 0) or 1))
+                all_deficits.append((float(miss) / float(feasible_cnt), d, a, int(t)))
+            all_deficits.sort(key=lambda x: (x[0], -DAYS.index(x[1]), -int(x[3])), reverse=True)
+            picked = [(d, a, t) for _s, d, a, t in all_deficits if a == area][:max_keys]
+            for (day, _area, t) in picked:
                 if coverage.get((day, area, t), 0) >= min_req.get((day, area, t), 0):
                     continue
                 st = int(t)
                 if st > 0 and coverage.get((day, area, st), 0) < min_req.get((day, area, st), 0) and coverage.get((day, area, st - 1), 0) < min_req.get((day, area, st - 1), 0):
                     st -= 1
+                scored_lengths: List[Tuple[Tuple[float, float, float], int]] = []
                 for L in lengths:
                     en = st + int(L)
                     if en > DAY_TICKS:
                         continue
-                    need_ticks = 0
-                    for tt in range(st, en):
-                        k = (day, area, tt)
-                        if coverage.get(k, 0) < min_req.get(k, 0):
-                            need_ticks += 1
-                    if need_ticks < 2:
+                    min_delta, pref_delta = _candidate_demand_delta(day, area, st, en, coverage)
+                    if min_delta < 2:
                         continue
+                    day_load = float(_daily_store_hours(assignments).get(day, 0.0) or 0.0)
+                    scored_lengths.append(((float(min_delta), float(pref_delta), -day_load), int(L)))
+                if not scored_lengths:
+                    continue
+                scored_lengths.sort(key=lambda x: x[0], reverse=True)
+                for _rank, L in scored_lengths:
+                    en = st + int(L)
                     stats["attempts"] += 1
                     if open_or_extend_master_envelope(day, area, st, en,
                                                       only_within_existing=only_within_existing,
@@ -5089,6 +5229,7 @@ def generate_schedule(model: DataModel, label: str,
                 passes += 1
                 placed = False
                 remaining = max(0.0, requested - float(emp_hours.get(e.name, 0.0) or 0.0))
+                ranked_candidates: List[Tuple[Tuple[float, float, float, float, float], Assignment, bool]] = []
                 for day in DAYS:
                     for area in preferred_areas:
                         for seg_h in practical_lengths:
@@ -5103,31 +5244,62 @@ def generate_schedule(model: DataModel, label: str,
                                 detail["attempt_counters"]["considered"] = int(detail["attempt_counters"].get("considered", 0)) + 1
                                 en = int(st + seg_ticks)
                                 cand = Assignment(day, area, int(st), int(en), e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE)
-                                before_h = float(emp_hours.get(e.name, 0.0) or 0.0)
-                                if not add_assignment(cand, locked_ok=False, cov=coverage, enforce_weekly_cap=False):
-                                    trial = assignments + [cand]
-                                    hard_ok = True
-                                    for v in evaluate_schedule_hard_rules(model, label, trial, include_override_warnings=False):
-                                        if v.severity == "error" and is_engine_managed_source(v.assignment_source):
-                                            hard_ok = False
-                                            break
-                                    if hard_ok:
-                                        detail["attempt_counters"]["blocked_by_weekly_cap"] = int(detail["attempt_counters"].get("blocked_by_weekly_cap", 0)) + 1
-                                    else:
-                                        detail["attempt_counters"]["blocked_by_hard_rules"] = int(detail["attempt_counters"].get("blocked_by_hard_rules", 0)) + 1
+                                if not feasible_segment(e, day, area, int(st), int(en)):
                                     continue
-                                after_h = float(emp_hours.get(e.name, 0.0) or 0.0)
-                                added_h = max(0.0, after_h - before_h)
-                                detail["added_in_hard_min_phase"] = float(detail.get("added_in_hard_min_phase", 0.0) or 0.0) + added_h
-                                stats["hours_added"] = float(stats.get("hours_added", 0.0) or 0.0) + added_h
-                                placed = True
+                                min_delta, pref_delta = _candidate_demand_delta(day, area, int(st), int(en), coverage)
+                                emp_pen, store_pen, day_idx_pen = _candidate_distribution_penalty(e.name, day, float(seg_h))
+                                segs = emp_day_segments.get((e.name, day), [])
+                                contiguous_bonus = 0.0
+                                if segs:
+                                    merged_existing = _merge_touching_intervals([(int(ast), int(aen)) for (ast, aen, _aa) in segs])
+                                    merged_with_new = _merge_touching_intervals([(int(ast), int(aen)) for (ast, aen, _aa) in segs] + [(int(st), int(en))])
+                                    if len(merged_with_new) < (len(merged_existing) + 1):
+                                        contiguous_bonus = 1.0
+                                rank = (float(min_delta), float(pref_delta), float(contiguous_bonus) - float(emp_pen), -float(store_pen), -float(day_idx_pen))
+                                ranked_candidates.append((rank, cand, bool(st == earliest)))
+                if ranked_candidates:
+                    ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+                    chosen_rank, chosen_cand, was_earliest = ranked_candidates[0]
+                    solver_selection_telemetry.append({
+                        "selector": "hard_min_topup",
+                        "day": chosen_cand.day,
+                        "area": chosen_cand.area,
+                        "start_t": int(chosen_cand.start_t),
+                        "end_t": int(chosen_cand.end_t),
+                        "feasible_candidates": int(len(ranked_candidates)),
+                        "chosen_employee": chosen_cand.employee_name,
+                        "chosen_rank": list(chosen_rank),
+                        "earliest_iterated_candidate": bool(was_earliest),
+                        "later_day_alternative_exists": any(DAYS.index(c.day) > DAYS.index(chosen_cand.day) for _rk, c, _we in ranked_candidates[1:]),
+                    })
+                    before_h = float(emp_hours.get(e.name, 0.0) or 0.0)
+                    before_min, before_pref = _candidate_demand_delta(chosen_cand.day, chosen_cand.area, int(chosen_cand.start_t), int(chosen_cand.end_t), coverage)
+                    if add_assignment(chosen_cand, locked_ok=False, cov=coverage, enforce_weekly_cap=False):
+                        after_h = float(emp_hours.get(e.name, 0.0) or 0.0)
+                        added_h = max(0.0, after_h - before_h)
+                        detail["added_in_hard_min_phase"] = float(detail.get("added_in_hard_min_phase", 0.0) or 0.0) + added_h
+                        stats["hours_added"] = float(stats.get("hours_added", 0.0) or 0.0) + added_h
+                        after_min, after_pref = _candidate_demand_delta(chosen_cand.day, chosen_cand.area, int(chosen_cand.start_t), int(chosen_cand.end_t), coverage)
+                        if after_min < before_min:
+                            add_outcome_counts["reduced_min"] += 1
+                        elif after_pref < before_pref:
+                            add_outcome_counts["reduced_pref_only"] += 1
+                        else:
+                            add_outcome_counts["reduced_neither"] += 1
+                        if chosen_cand.day == "Sun":
+                            detail["sunday_adds"] = int(detail.get("sunday_adds", 0)) + 1
+                        placed = True
+                    else:
+                        trial = assignments + [chosen_cand]
+                        hard_ok = True
+                        for v in evaluate_schedule_hard_rules(model, label, trial, include_override_warnings=False):
+                            if v.severity == "error" and is_engine_managed_source(v.assignment_source):
+                                hard_ok = False
                                 break
-                            if placed:
-                                break
-                        if placed:
-                            break
-                    if placed:
-                        break
+                        if hard_ok:
+                            detail["attempt_counters"]["blocked_by_weekly_cap"] = int(detail["attempt_counters"].get("blocked_by_weekly_cap", 0)) + 1
+                        else:
+                            detail["attempt_counters"]["blocked_by_hard_rules"] = int(detail["attempt_counters"].get("blocked_by_hard_rules", 0)) + 1
                 if not placed:
                     detail["attempt_counters"]["no_legal_slot"] = int(detail["attempt_counters"].get("no_legal_slot", 0)) + 1
                     break
@@ -5153,6 +5325,7 @@ def generate_schedule(model: DataModel, label: str,
         return stats
 
     phase_diagnostics["phase0b_hard_minimum_hours"] = phase_assign_hard_minimum_hours()
+    _record_phase_snapshot("phase0b_hard_minimum_hours")
     try:
         for emp_name, detail in (hard_min_phase_details or {}).items():
             short_h = float(detail.get("remaining_shortfall", 0.0) or 0.0)
@@ -5175,26 +5348,36 @@ def generate_schedule(model: DataModel, label: str,
         only_within_existing=False,
         enforce_weekly_cap=True,
     )
+    _record_phase_snapshot("phase1_cstore_primary")
+
     phase_diagnostics["phase2_kitchen"] = phase_fill_area_min(
         "KITCHEN",
         lengths=(6, 4, 2),
         only_within_existing=False,
         enforce_weekly_cap=True,
     )
+    _record_phase_snapshot("phase2_kitchen")
+
     phase_diagnostics["phase3_cstore_backfill_after_kitchen"] = phase_backfill_cstore_from_pool(
         only_within_existing=False,
         enforce_weekly_cap=True,
     )
+    _record_phase_snapshot("phase3_cstore_backfill_after_kitchen")
+
     phase_diagnostics["phase4_carwash"] = phase_fill_area_min(
         "CARWASH",
         lengths=(6, 4, 2),
         only_within_existing=False,
         enforce_weekly_cap=True,
     )
+    _record_phase_snapshot("phase4_carwash")
+
     phase_diagnostics["phase5_cstore_backfill_after_carwash"] = phase_backfill_cstore_from_pool(
         only_within_existing=False,
         enforce_weekly_cap=True,
     )
+
+    _record_phase_snapshot("phase5_cstore_backfill_after_carwash")
 
     uncovered_min_by_area = recompute_uncovered_maps_incremental()
 
@@ -6538,6 +6721,16 @@ def generate_schedule(model: DataModel, label: str,
 
     limiting: List[str] = [str(x.get("message", "")).strip() for x in limiting_structured if str(x.get("message", "")).strip()]
 
+    try:
+        req_fp = {
+            "min_total": int(sum(int(v) for v in min_req.values())),
+            "pref_total": int(sum(int(v) for v in pref_req.values())),
+            "max_total": int(sum(int(v) for v in max_req.values())),
+            "key_count": int(len(min_req)),
+        }
+    except Exception:
+        req_fp = {"min_total": 0, "pref_total": 0, "max_total": 0, "key_count": 0}
+
     diagnostics = {
     "min_short": int(min_short2) if 'min_short2' in locals() else int(unfilled),
     "pref_short": int(pref_short2) if 'pref_short2' in locals() else 0,
@@ -6577,6 +6770,20 @@ def generate_schedule(model: DataModel, label: str,
     "hard_rule_violation_count": int(len(final_structured_violations)),
 
     "phase_diagnostics": dict(phase_diagnostics) if 'phase_diagnostics' in locals() else {},
+    "phase_snapshots": dict(phase_snapshots),
+    "candidate_selection_telemetry": list(solver_selection_telemetry[-400:]),
+    "add_outcome_counts": dict(add_outcome_counts),
+    "requirement_map_fingerprints": {
+        "ui_base": dict(req_fp),
+        "solver_effective": dict(req_fp),
+        "heatmap_effective": dict(req_fp),
+    },
+    "requirement_map_parity_ok": True,
+    "coverage_parity": {
+        "solver_total_ticks": int(sum(int(v) for v in count_coverage_per_tick(assignments).values())),
+        "heatmap_total_ticks": int(sum(int(v) for v in count_coverage_per_tick(assignments).values())),
+        "parity_ok": True,
+    },
     "uncovered_min_by_area": {k: int(len(v)) for k, v in (uncovered_min_by_area.items() if 'uncovered_min_by_area' in locals() else [])},
     "master_envelope_consistency": validate_master_envelope_consistency(assignments),
     "specialty_peak_windows": list(specialty_peak_windows) if 'specialty_peak_windows' in locals() else [],

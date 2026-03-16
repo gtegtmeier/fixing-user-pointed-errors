@@ -1,0 +1,1932 @@
+{
+  "balanced": {
+    "before": {
+      "hours_by_day": {
+        "Sun": 8.0,
+        "Mon": 8.0,
+        "Tue": 8.0,
+        "Wed": 8.0,
+        "Thu": 8.0,
+        "Fri": 8.0,
+        "Sat": 8.0
+      },
+      "sunday_pct": 0.14285714285714285,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 14,
+          "adds": 14
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 56.0,
+            "derived_envelope_hours": 56.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 14
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [],
+      "add_outcome_counts": {},
+      "requirement_map_parity_ok": null,
+      "requirement_map_fingerprints": {},
+      "coverage_parity": {},
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    },
+    "after": {
+      "hours_by_day": {
+        "Sun": 8.0,
+        "Mon": 8.0,
+        "Tue": 8.0,
+        "Wed": 8.0,
+        "Thu": 8.0,
+        "Fri": 8.0,
+        "Sat": 8.0
+      },
+      "sunday_pct": 0.14285714285714285,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 14,
+          "adds": 14
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 56.0,
+            "derived_envelope_hours": 56.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 14
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -3.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -3.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -4.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -4.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -5.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -5.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.6,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        }
+      ],
+      "add_outcome_counts": {
+        "reduced_min": 14,
+        "reduced_pref_only": 0,
+        "reduced_neither": 0
+      },
+      "requirement_map_parity_ok": true,
+      "requirement_map_fingerprints": {
+        "ui_base": {
+          "min_total": 112,
+          "pref_total": 112,
+          "max_total": 224,
+          "key_count": 112
+        },
+        "solver_effective": {
+          "min_total": 112,
+          "pref_total": 112,
+          "max_total": 224,
+          "key_count": 112
+        },
+        "heatmap_effective": {
+          "min_total": 112,
+          "pref_total": 112,
+          "max_total": 224,
+          "key_count": 112
+        }
+      },
+      "coverage_parity": {
+        "solver_total_ticks": 112,
+        "heatmap_total_ticks": 112,
+        "parity_ok": true
+      },
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    }
+  },
+  "equal_choice": {
+    "before": {
+      "hours_by_day": {
+        "Sun": 4.0,
+        "Mon": 4.0,
+        "Tue": 4.0,
+        "Wed": 4.0,
+        "Thu": 4.0,
+        "Fri": 4.0,
+        "Sat": 4.0
+      },
+      "sunday_pct": 0.14285714285714285,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 7,
+          "adds": 7
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 28.0,
+            "derived_envelope_hours": 28.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 7
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [],
+      "add_outcome_counts": {},
+      "requirement_map_parity_ok": null,
+      "requirement_map_fingerprints": {},
+      "coverage_parity": {},
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    },
+    "after": {
+      "hours_by_day": {
+        "Sun": 4.0,
+        "Mon": 4.0,
+        "Tue": 4.0,
+        "Wed": 4.0,
+        "Thu": 4.0,
+        "Fri": 4.0,
+        "Sat": 4.0
+      },
+      "sunday_pct": 0.14285714285714285,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 7,
+          "adds": 7
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 28.0,
+            "derived_envelope_hours": 28.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 7
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -3.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -4.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -5.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 18,
+          "end_t": 26,
+          "feasible_candidates": 2,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        }
+      ],
+      "add_outcome_counts": {
+        "reduced_min": 7,
+        "reduced_pref_only": 0,
+        "reduced_neither": 0
+      },
+      "requirement_map_parity_ok": true,
+      "requirement_map_fingerprints": {
+        "ui_base": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        },
+        "solver_effective": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        },
+        "heatmap_effective": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        }
+      },
+      "coverage_parity": {
+        "solver_total_ticks": 56,
+        "heatmap_total_ticks": 56,
+        "parity_ok": true
+      },
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    }
+  },
+  "hard_min": {
+    "before": {
+      "hours_by_day": {
+        "Sun": 12.0,
+        "Mon": 8.0,
+        "Tue": 4.0,
+        "Wed": 4.0,
+        "Thu": 4.0,
+        "Fri": 4.0,
+        "Sat": 4.0
+      },
+      "sunday_pct": 0.3,
+      "phase0b": {
+        "employees_considered": 1,
+        "employees_with_targets": 1,
+        "employees_met": 1,
+        "employees_unmet": 0,
+        "hours_added": 12.0,
+        "per_employee": {
+          "A": {
+            "requested_min": 12.0,
+            "locked_credit": 0.0,
+            "pre_phase_hours": 0.0,
+            "added_in_hard_min_phase": 12.0,
+            "post_phase_hours": 12.0,
+            "remaining_shortfall": 0.0,
+            "blockers": [],
+            "attempt_counters": {
+              "considered": 354,
+              "not_cstore": 0,
+              "blocked_by_weekly_cap": 0,
+              "blocked_by_hard_rules": 352,
+              "no_legal_slot": 0
+            }
+          }
+        }
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 1,
+          "employees_with_targets": 1,
+          "employees_met": 1,
+          "employees_unmet": 0,
+          "hours_added": 12.0,
+          "per_employee": {
+            "A": {
+              "requested_min": 12.0,
+              "locked_credit": 0.0,
+              "pre_phase_hours": 0.0,
+              "added_in_hard_min_phase": 12.0,
+              "post_phase_hours": 12.0,
+              "remaining_shortfall": 0.0,
+              "blockers": [],
+              "attempt_counters": {
+                "considered": 354,
+                "not_cstore": 0,
+                "blocked_by_weekly_cap": 0,
+                "blocked_by_hard_rules": 352,
+                "no_legal_slot": 0
+              }
+            }
+          }
+        },
+        "phase1_cstore_primary": {
+          "attempts": 7,
+          "adds": 7
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 40.0,
+            "derived_envelope_hours": 40.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 9
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [],
+      "add_outcome_counts": {},
+      "requirement_map_parity_ok": null,
+      "requirement_map_fingerprints": {},
+      "coverage_parity": {},
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    },
+    "after": {
+      "hours_by_day": {
+        "Sun": 2.0,
+        "Mon": 2.0,
+        "Tue": 2.0,
+        "Wed": 2.0,
+        "Thu": 2.0,
+        "Fri": 2.0,
+        "Sat": 4.0
+      },
+      "sunday_pct": 0.125,
+      "phase0b": {
+        "employees_considered": 1,
+        "employees_with_targets": 1,
+        "employees_met": 1,
+        "employees_unmet": 0,
+        "hours_added": 12.0,
+        "per_employee": {
+          "A": {
+            "requested_min": 12.0,
+            "locked_credit": 0.0,
+            "pre_phase_hours": 0.0,
+            "added_in_hard_min_phase": 12.0,
+            "post_phase_hours": 12.0,
+            "remaining_shortfall": 0.0,
+            "blockers": [],
+            "attempt_counters": {
+              "considered": 17668,
+              "not_cstore": 0,
+              "blocked_by_weekly_cap": 0,
+              "blocked_by_hard_rules": 0,
+              "no_legal_slot": 0
+            },
+            "sunday_adds": 1
+          }
+        }
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 1,
+          "employees_with_targets": 1,
+          "employees_met": 1,
+          "employees_unmet": 0,
+          "hours_added": 12.0,
+          "per_employee": {
+            "A": {
+              "requested_min": 12.0,
+              "locked_credit": 0.0,
+              "pre_phase_hours": 0.0,
+              "added_in_hard_min_phase": 12.0,
+              "post_phase_hours": 12.0,
+              "remaining_shortfall": 0.0,
+              "blockers": [],
+              "attempt_counters": {
+                "considered": 17668,
+                "not_cstore": 0,
+                "blocked_by_weekly_cap": 0,
+                "blocked_by_hard_rules": 0,
+                "no_legal_slot": 0
+              },
+              "sunday_adds": 1
+            }
+          }
+        },
+        "phase1_cstore_primary": {
+          "attempts": 1,
+          "adds": 1
+        },
+        "phase2_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 16.0,
+            "derived_envelope_hours": 16.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 7
+          },
+          "late_micro_fill": {
+            "window_attempts": 0,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [
+        {
+          "selector": "hard_min_topup",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 3444,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -0.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "hard_min_topup",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 2972,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -1.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "hard_min_topup",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 2500,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -2.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "hard_min_topup",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 1764,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -3.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "hard_min_topup",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 1120,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -4.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "hard_min_topup",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 600,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            0.0,
+            -0.0,
+            -5.0
+          ],
+          "earliest_iterated_candidate": false,
+          "later_day_alternative_exists": true
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 20,
+          "end_t": 28,
+          "feasible_candidates": 1,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -2.0,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        }
+      ],
+      "add_outcome_counts": {
+        "reduced_min": 7,
+        "reduced_pref_only": 0,
+        "reduced_neither": 0
+      },
+      "requirement_map_parity_ok": true,
+      "requirement_map_fingerprints": {
+        "ui_base": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        },
+        "solver_effective": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        },
+        "heatmap_effective": {
+          "min_total": 28,
+          "pref_total": 28,
+          "max_total": 56,
+          "key_count": 28
+        }
+      },
+      "coverage_parity": {
+        "solver_total_ticks": 32,
+        "heatmap_total_ticks": 32,
+        "parity_ok": true
+      },
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 0,
+        "CARWASH": 0
+      }
+    }
+  },
+  "multi_area": {
+    "before": {
+      "hours_by_day": {
+        "Sun": 16.0,
+        "Mon": 15.0,
+        "Tue": 9.0,
+        "Wed": 8.0,
+        "Thu": 8.0,
+        "Fri": 8.0,
+        "Sat": 8.0
+      },
+      "sunday_pct": 0.2222222222222222,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 14,
+          "adds": 14
+        },
+        "phase2_kitchen": {
+          "attempts": 122,
+          "adds": 5
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 160,
+          "adds": 2
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 72.0,
+            "derived_envelope_hours": 72.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 17
+          },
+          "late_micro_fill": {
+            "window_attempts": 12,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 2,
+              "combined_open": 8,
+              "internal_reslice": 16
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [],
+      "add_outcome_counts": {},
+      "requirement_map_parity_ok": null,
+      "requirement_map_fingerprints": {},
+      "coverage_parity": {},
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 38,
+        "CARWASH": 48
+      }
+    },
+    "after": {
+      "hours_by_day": {
+        "Sun": 16.0,
+        "Mon": 15.0,
+        "Tue": 9.0,
+        "Wed": 8.0,
+        "Thu": 8.0,
+        "Fri": 8.0,
+        "Sat": 8.0
+      },
+      "sunday_pct": 0.2222222222222222,
+      "phase0b": {
+        "employees_considered": 0,
+        "employees_with_targets": 0,
+        "employees_met": 0,
+        "employees_unmet": 0,
+        "hours_added": 0.0,
+        "per_employee": {}
+      },
+      "phase": {
+        "phase0_seed_locked": {
+          "seed": {
+            "locked_count": 0,
+            "locked_hours": 0.0,
+            "locked_hours_by_area": {
+              "CSTORE": 0.0,
+              "KITCHEN": 0.0,
+              "CARWASH": 0.0
+            },
+            "locked_coverage": {},
+            "locked_envelopes": {},
+            "label": ""
+          },
+          "envelope_consistency": {
+            "raw_assignment_hours": 0.0,
+            "derived_envelope_hours": 0.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 0
+          }
+        },
+        "phase0b_hard_minimum_hours": {
+          "employees_considered": 0,
+          "employees_with_targets": 0,
+          "employees_met": 0,
+          "employees_unmet": 0,
+          "hours_added": 0.0,
+          "per_employee": {}
+        },
+        "phase1_cstore_primary": {
+          "attempts": 14,
+          "adds": 14
+        },
+        "phase2_kitchen": {
+          "attempts": 122,
+          "adds": 5
+        },
+        "phase3_cstore_backfill_after_kitchen": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase4_carwash": {
+          "attempts": 160,
+          "adds": 2
+        },
+        "phase5_cstore_backfill_after_carwash": {
+          "attempts": 0,
+          "adds": 0
+        },
+        "phase6_targeted_final_repair": {
+          "constructive_checkpoint_engine_hard": 0,
+          "envelope_consistency": {
+            "raw_assignment_hours": 72.0,
+            "derived_envelope_hours": 72.0,
+            "hours_parity_ok": true,
+            "overlap_ticks_detected": 0,
+            "envelope_count": 17
+          },
+          "late_micro_fill": {
+            "window_attempts": 12,
+            "adds_extend": 0,
+            "adds_open": 0,
+            "merged_candidates_generated": {
+              "extend_absorb": 2,
+              "combined_open": 8,
+              "internal_reslice": 16
+            },
+            "merged_candidates_legal": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "merged_candidates_selected": {
+              "extend_absorb": 0,
+              "combined_open": 0,
+              "internal_reslice": 0
+            },
+            "example_repairs": []
+          }
+        },
+        "phase7_final_legality": {
+          "final_total_violations": 0,
+          "final_engine_hard_violations": 0,
+          "override_only_violations": 0,
+          "repair_stats": {}
+        }
+      },
+      "telemetry": [
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -3.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Wed",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -3.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -4.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Thu",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -4.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -5.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Fri",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -5.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 16,
+          "end_t": 24,
+          "feasible_candidates": 3,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            8.0,
+            8.0,
+            -2.0,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sat",
+          "area": "CSTORE",
+          "start_t": 24,
+          "end_t": 32,
+          "feasible_candidates": 3,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.6,
+            -6.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "KITCHEN",
+          "start_t": 18,
+          "end_t": 24,
+          "feasible_candidates": 1,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -2.2,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "KITCHEN",
+          "start_t": 24,
+          "end_t": 30,
+          "feasible_candidates": 2,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            2.0,
+            2.0,
+            -4.65,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "KITCHEN",
+          "start_t": 18,
+          "end_t": 24,
+          "feasible_candidates": 1,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            6.0,
+            6.0,
+            -5.2,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "KITCHEN",
+          "start_t": 24,
+          "end_t": 28,
+          "feasible_candidates": 1,
+          "chosen_employee": "A",
+          "chosen_rank": [
+            2.0,
+            2.0,
+            -4.65,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Tue",
+          "area": "KITCHEN",
+          "start_t": 18,
+          "end_t": 20,
+          "feasible_candidates": 1,
+          "chosen_employee": "B",
+          "chosen_rank": [
+            2.0,
+            2.0,
+            -1.2,
+            -2.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Sun",
+          "area": "CARWASH",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 1,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -5.1,
+            -0.0
+          ],
+          "later_day_alternative_exists": false
+        },
+        {
+          "selector": "open_or_extend_master_envelope",
+          "day": "Mon",
+          "area": "CARWASH",
+          "start_t": 20,
+          "end_t": 24,
+          "feasible_candidates": 1,
+          "chosen_employee": "C",
+          "chosen_rank": [
+            4.0,
+            4.0,
+            -1.95,
+            -1.0
+          ],
+          "later_day_alternative_exists": false
+        }
+      ],
+      "add_outcome_counts": {
+        "reduced_min": 21,
+        "reduced_pref_only": 0,
+        "reduced_neither": 0
+      },
+      "requirement_map_parity_ok": true,
+      "requirement_map_fingerprints": {
+        "ui_base": {
+          "min_total": 210,
+          "pref_total": 210,
+          "max_total": 420,
+          "key_count": 210
+        },
+        "solver_effective": {
+          "min_total": 210,
+          "pref_total": 210,
+          "max_total": 420,
+          "key_count": 210
+        },
+        "heatmap_effective": {
+          "min_total": 210,
+          "pref_total": 210,
+          "max_total": 420,
+          "key_count": 210
+        }
+      },
+      "coverage_parity": {
+        "solver_total_ticks": 144,
+        "heatmap_total_ticks": 144,
+        "parity_ok": true
+      },
+      "uncovered_min_by_area": {
+        "CSTORE": 0,
+        "KITCHEN": 38,
+        "CARWASH": 48
+      }
+    }
+  }
+}
