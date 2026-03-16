@@ -1479,6 +1479,8 @@ def _normalize_time_off_status(v: Any) -> str:
     s = str(v or 'pending').strip().lower()
     if s in {'approved', 'denied', 'pending'}:
         return s
+    if s in {'declined', 'decline'}:
+        return 'denied'
     if s in {'undecided', 'pending / undecided', 'pending/undecided'}:
         return 'pending'
     return 'pending'
@@ -9331,15 +9333,17 @@ class SchedulerApp(tk.Tk):
 
         status_row = ttk.LabelFrame(req_box, text="Request Status Review")
         status_row.pack(fill="x", padx=8, pady=(0, 8))
-        self.time_off_status_target_var = tk.StringVar(value="Select a request to review status")
-        ttk.Label(status_row, textvariable=self.time_off_status_target_var).pack(anchor="w", padx=8, pady=(6, 4))
+        self.time_off_status_target_var = tk.StringVar(value="Select a time-off request to review status.")
+        ttk.Label(status_row, textvariable=self.time_off_status_target_var).pack(anchor="w", padx=8, pady=(6, 2))
+        self.time_off_status_note_var = tk.StringVar(value="")
+        ttk.Label(status_row, textvariable=self.time_off_status_note_var, style="Hint.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
 
         self.time_off_status_var = tk.StringVar(value="pending")
         btns = ttk.Frame(status_row)
         btns.pack(anchor="w", padx=8, pady=(0, 8))
         self.time_off_status_rb_approved = ttk.Radiobutton(btns, text="Approved", value="approved", variable=self.time_off_status_var, command=self._on_status_radio_change)
         self.time_off_status_rb_approved.pack(side="left", padx=(0, 10))
-        self.time_off_status_rb_denied = ttk.Radiobutton(btns, text="Denied", value="denied", variable=self.time_off_status_var, command=self._on_status_radio_change)
+        self.time_off_status_rb_denied = ttk.Radiobutton(btns, text="Declined", value="denied", variable=self.time_off_status_var, command=self._on_status_radio_change)
         self.time_off_status_rb_denied.pack(side="left", padx=(0, 10))
         self.time_off_status_rb_pending = ttk.Radiobutton(btns, text="Pending / Undecided", value="pending", variable=self.time_off_status_var, command=self._on_status_radio_change)
         self.time_off_status_rb_pending.pack(side="left")
@@ -9403,14 +9407,19 @@ class SchedulerApp(tk.Tk):
             return 'All Day'
         return f"{tick_to_hhmm(int(r.start_t))}-{tick_to_hhmm(int(r.end_t))}"
 
-    def refresh_time_off_tree(self):
+    def refresh_time_off_tree(self, selected_request_id: Optional[str] = None):
         if not hasattr(self, 'time_off_tree'):
             return
+        keep_iid = str(selected_request_id or "").strip()
         for i in self.time_off_tree.get_children():
             self.time_off_tree.delete(i)
         for r in sorted(self._requests_for_label(), key=lambda x: (x.employee_name.lower(), DAYS.index(x.day), int(x.start_t), int(x.end_t))):
-            status_txt = 'Pending / Undecided' if r.status == 'pending' else r.status.title()
+            status_txt = 'Pending / Undecided' if r.status == 'pending' else ('Declined' if r.status == 'denied' else r.status.title())
             self.time_off_tree.insert('', 'end', iid=r.request_id, values=(r.employee_name, DAY_FULL.get(r.day, r.day), self._format_request_window(r), status_txt, r.note))
+        if keep_iid and self.time_off_tree.exists(keep_iid):
+            self.time_off_tree.selection_set(keep_iid)
+            self.time_off_tree.focus(keep_iid)
+            self.time_off_tree.see(keep_iid)
         self._on_time_off_tree_select()
 
     def _open_time_off_popup(self, mode: str, seed_requests: Optional[List[TimeOffRequest]] = None):
@@ -9570,11 +9579,21 @@ class SchedulerApp(tk.Tk):
         sel = self._selected_request()
         if sel is None:
             if hasattr(self, "time_off_status_target_var"):
-                self.time_off_status_target_var.set("Select a request to review status")
+                self.time_off_status_target_var.set("Select a time-off request to review status.")
+            if hasattr(self, "time_off_status_note_var"):
+                self.time_off_status_note_var.set("")
             self._set_status_controls_enabled(False)
             return
         if hasattr(self, "time_off_status_target_var"):
-            self.time_off_status_target_var.set(f"{sel.employee_name} • {DAY_FULL.get(sel.day, sel.day)} • {self._format_request_window(sel)}")
+            self.time_off_status_target_var.set(
+                f"Employee: {sel.employee_name}    Day: {DAY_FULL.get(sel.day, sel.day)}    Window: {self._format_request_window(sel)}"
+            )
+        if hasattr(self, "time_off_status_note_var"):
+            note = (sel.note or "").strip()
+            if note:
+                self.time_off_status_note_var.set(f"Note: {note[:120]}" + ("..." if len(note) > 120 else ""))
+            else:
+                self.time_off_status_note_var.set("Note: (none)")
         if hasattr(self, "time_off_status_var"):
             self.time_off_status_var.set(_normalize_time_off_status(sel.status))
         self._set_status_controls_enabled(True)
@@ -9587,13 +9606,14 @@ class SchedulerApp(tk.Tk):
         sel = self._selected_request()
         if sel is None:
             return
+        selected_id = str(sel.request_id)
         reqs = self._requests_for_label()
         for i, r in enumerate(reqs):
             if r.request_id == sel.request_id:
                 reqs[i].status = st
                 break
         self._save_requests_for_label(reqs)
-        self.refresh_time_off_tree()
+        self.refresh_time_off_tree(selected_id)
         self.autosave()
 
     # -------- Requirements tab --------
