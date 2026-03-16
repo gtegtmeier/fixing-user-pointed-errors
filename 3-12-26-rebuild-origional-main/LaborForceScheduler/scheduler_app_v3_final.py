@@ -9333,7 +9333,11 @@ class SchedulerApp(tk.Tk):
         return cur[lbl]
 
     def _build_overrides_tab(self):
-        frm = ttk.Frame(self.tab_over); frm.pack(fill="both", expand=True, padx=12, pady=12)
+        _outer, frm, _canvas = _build_scrollable_canvas_host(
+            self.tab_over,
+            padding=(12, 12, 12, 12),
+            min_width=1120,
+        )
         ttk.Label(
             frm,
             text="Temporary one-week schedule exceptions for the selected week. These changes affect only that schedule and do not change recurring employee availability.",
