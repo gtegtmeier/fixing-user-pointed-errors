@@ -219,6 +219,32 @@ def rel_path(*parts: str) -> str:
     return os.path.join(app_dir(), *parts)
 
 
+def ensure_runtime_support_dirs() -> None:
+    """Create expected runtime folders for portable operation (best-effort)."""
+    for parts in [
+        ("data",),
+        ("data", "final_schedules"),
+        ("data", "backups"),
+        ("exports",),
+        ("history",),
+        ("Assets",),
+        ("assets",),
+        ("state_laws",),
+    ]:
+        try:
+            ensure_dir(rel_path(*parts))
+        except Exception:
+            pass
+
+
+def _candidate_starter_data_paths() -> List[str]:
+    """Return supported starter-data locations (new + legacy casing)."""
+    return [
+        rel_path("Assets", "starting_data_3-2-26.json"),
+        rel_path("assets", "starting_data_3-2-26.json"),
+    ]
+
+
 US_STATES: List[Tuple[str, str]] = [
     ("AL", "Alabama"), ("AK", "Alaska"), ("AZ", "Arizona"), ("AR", "Arkansas"), ("CA", "California"),
     ("CO", "Colorado"), ("CT", "Connecticut"), ("DE", "Delaware"), ("FL", "Florida"), ("GA", "Georgia"),
@@ -8741,13 +8767,18 @@ class SchedulerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.data_path = default_data_path()
+        try:
+            ensure_runtime_support_dirs()
+        except Exception:
+            pass
         # If no user data exists yet, seed with bundled starter data (for safe testing)
         try:
             if not os.path.isfile(self.data_path):
                 ensure_dir(os.path.dirname(self.data_path))
-                bundled = rel_path("assets", "starting_data_3-2-26.json")
-                if os.path.isfile(bundled):
-                    shutil.copyfile(bundled, self.data_path)
+                for bundled in _candidate_starter_data_paths():
+                    if os.path.isfile(bundled):
+                        shutil.copyfile(bundled, self.data_path)
+                        break
         except Exception:
             pass
         # state
