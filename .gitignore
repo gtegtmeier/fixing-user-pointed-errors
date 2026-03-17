@@ -1,0 +1,11 @@
+# Packaged/build artifacts
+*.zip
+
+# Python cache artifacts
+__pycache__/
+*.pyc
+
+# Local runtime/generated outputs
+crash_log.txt
+run_log.txt
+validation_results_final.json

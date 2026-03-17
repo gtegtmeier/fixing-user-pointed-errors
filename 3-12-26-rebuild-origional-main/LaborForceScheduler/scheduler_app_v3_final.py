@@ -254,10 +254,16 @@ def ensure_state_law_seed_files() -> None:
             payload = {
                 "state_code": code,
                 "state_name": name,
-                "complete": False,
-                "notes": "Placeholder profile. Program will fall back to default rules until this is completed.",
+                "complete": True,
+                "notes": "Conservative normalized core minor-hour restrictions. Customize if needed.",
                 "minor_rules": {
-                    "mode": "default_fallback"
+                    "mode": "core_minors_v1",
+                    "enforce": True,
+                    "school_week_default": True,
+                    "caps": {
+                        "MINOR_14_15": {"school_day": 3.0, "nonschool_day": 8.0, "weekly_school": 18.0, "weekly_nonschool": 40.0},
+                        "MINOR_16_17": {"school_day": 4.0, "nonschool_day": 8.0, "weekly_school": 28.0, "weekly_nonschool": 40.0}
+                    }
                 }
             }
             _atomic_write_json(p, payload, indent=2)
@@ -290,40 +296,53 @@ def load_state_law_profile(state_code: str) -> Tuple[Dict[str, Any], str]:
 
 
 def apply_state_law_profile_to_model(model: "DataModel", state_code: str, profile: Dict[str, Any]) -> Tuple[bool, str]:
-    """Apply a loaded state-law profile to runtime model settings when safely supported.
+    """Apply selected-state core minor-rule profile into runtime config.
 
-    Returns (applied, status_message). Caller should keep default behavior when applied=False.
+    Only the chosen Store-tab state is applied; no cross-state blending.
     """
     code = str(state_code or "").strip().upper()
     if not isinstance(profile, dict):
         return False, f"State law profile apply skipped for {code}: profile payload is not a JSON object."
     if str(profile.get("state_code", "")).strip().upper() != code:
         return False, f"State law profile apply skipped for {code}: profile state_code mismatch."
-    if not bool(profile.get("complete", False)):
-        return False, f"State law profile apply skipped for {code}: profile marked incomplete."
-
-    # Runtime mapping is intentionally conservative in this pass.
-    # We map only fields that are already represented by runtime model settings.
-    if code != "ND":
-        return False, f"State law profile loaded for {code}; runtime mapping not defined yet (defaults retained)."
 
     minor_rules = profile.get("minor_rules", {})
     if not isinstance(minor_rules, dict):
-        return False, "State law profile apply skipped for ND: minor_rules section missing/invalid."
+        return False, f"State law profile apply skipped for {code}: minor_rules section missing/invalid."
 
-    mode = str(minor_rules.get("mode", "")).strip().lower()
-    if mode not in {"nd_14_15", "north_dakota_14_15"}:
-        return False, "State law profile apply skipped for ND: unsupported minor_rules mode."
+    mode = str(minor_rules.get("mode", "") or "").strip().lower()
+    if mode not in {"core_minors_v1", "nd_legacy", "default_fallback", "nd_14_15", "north_dakota_14_15"}:
+        return False, f"State law profile apply skipped for {code}: unsupported minor_rules mode."
 
     try:
         model.nd_rules.enforce = bool(minor_rules.get("enforce", True))
-        school_week_default = minor_rules.get("school_week_default", None)
-        if isinstance(school_week_default, bool):
-            model.nd_rules.is_school_week = bool(school_week_default)
-    except Exception as ex:
-        return False, f"State law profile apply failed for ND: {ex}"
+        if minor_rules.get("school_week_default", None) is not None:
+            model.nd_rules.is_school_week = bool(minor_rules.get("school_week_default"))
 
-    return True, "State law profile applied for ND runtime minor-rule settings."
+        if mode in {"nd_legacy", "nd_14_15", "north_dakota_14_15"} and code == "ND":
+            model.nd_rules.state_code = "ND"
+            model.nd_rules.mode = "nd_legacy"
+            model.nd_rules.caps_by_minor = {}
+            return True, "State law profile applied for ND (legacy mode)."
+
+        caps_payload = dict(minor_rules.get("caps", {}) or {})
+        caps_map: Dict[str, Dict[str, float]] = {}
+        for mtype in ("MINOR_14_15", "MINOR_16_17"):
+            row = dict(caps_payload.get(mtype, {}) or {})
+            caps_map[mtype] = {
+                "school_day": float(row.get("school_day", 3.0 if mtype == "MINOR_14_15" else 4.0) or 0.0),
+                "nonschool_day": float(row.get("nonschool_day", 8.0) or 0.0),
+                "weekly_school": float(row.get("weekly_school", 18.0 if mtype == "MINOR_14_15" else 28.0) or 0.0),
+                "weekly_nonschool": float(row.get("weekly_nonschool", 40.0) or 0.0),
+            }
+
+        model.nd_rules.state_code = code
+        model.nd_rules.mode = "core_minors_v1" if mode != "default_fallback" else "default_fallback"
+        model.nd_rules.caps_by_minor = caps_map
+    except Exception as ex:
+        return False, f"State law profile apply failed for {code}: {ex}"
+
+    return True, f"State law profile applied for {code} runtime minor settings."
 
 def _safe_export_label_token(label: str, max_len: int = 24) -> str:
     raw = str(label or '').strip()
@@ -733,23 +752,50 @@ def is_summer_for_minor_14_15(day_date: datetime.date) -> bool:
     return (day_date >= datetime.date(day_date.year, 6, 1)) and (day_date <= ld)
 
 def nd_minor_daily_hour_cap(model: "DataModel", e: "Employee", day: str, label: str = "") -> Optional[float]:
-    """Return ND daily legal cap (hours) for this employee/day, or None when not applicable."""
+    """Return selected-state daily legal cap (hours) for this employee/day, or None when not applicable."""
     if not bool(getattr(getattr(model, "nd_rules", None), "enforce", False)):
         return None
-    if str(getattr(e, "minor_type", "ADULT") or "ADULT") != "MINOR_14_15":
+    minor_type = str(getattr(e, "minor_type", "ADULT") or "ADULT")
+    if minor_type == "ADULT":
+        return None
+
+    mode = str(getattr(model.nd_rules, "mode", "nd_legacy") or "nd_legacy")
+    if mode == "nd_legacy":
+        if minor_type != "MINOR_14_15":
+            return None
+        school_week = bool(getattr(model.nd_rules, "is_school_week", True))
+        if school_week and day in {"Mon", "Tue", "Wed", "Thu", "Fri"} and not is_no_school_day_for_label(model, label, day):
+            return 3.0
+        return 8.0
+
+    caps = dict((getattr(model.nd_rules, "caps_by_minor", {}) or {}).get(minor_type, {}) or {})
+    if not caps:
         return None
     school_week = bool(getattr(model.nd_rules, "is_school_week", True))
     if school_week and day in {"Mon", "Tue", "Wed", "Thu", "Fri"} and not is_no_school_day_for_label(model, label, day):
-        return 3.0
-    return 8.0
+        return float(caps.get("school_day", 0.0) or 0.0)
+    return float(caps.get("nonschool_day", caps.get("school_day", 0.0)) or 0.0)
 
 def nd_minor_weekly_hour_cap(model: "DataModel", e: "Employee") -> Optional[float]:
-    """Return ND weekly legal cap (hours) for this employee, or None when not applicable."""
+    """Return selected-state weekly legal cap (hours) for this employee, or None when not applicable."""
     if not bool(getattr(getattr(model, "nd_rules", None), "enforce", False)):
         return None
-    if str(getattr(e, "minor_type", "ADULT") or "ADULT") != "MINOR_14_15":
+    minor_type = str(getattr(e, "minor_type", "ADULT") or "ADULT")
+    if minor_type == "ADULT":
         return None
-    return 18.0 if bool(getattr(model.nd_rules, "is_school_week", True)) else 40.0
+
+    mode = str(getattr(model.nd_rules, "mode", "nd_legacy") or "nd_legacy")
+    if mode == "nd_legacy":
+        if minor_type != "MINOR_14_15":
+            return None
+        return 18.0 if bool(getattr(model.nd_rules, "is_school_week", True)) else 40.0
+
+    caps = dict((getattr(model.nd_rules, "caps_by_minor", {}) or {}).get(minor_type, {}) or {})
+    if not caps:
+        return None
+    if bool(getattr(model.nd_rules, "is_school_week", True)):
+        return float(caps.get("weekly_school", 0.0) or 0.0)
+    return float(caps.get("weekly_nonschool", caps.get("weekly_school", 0.0)) or 0.0)
 
 def nd_minor_hours_feasible(model: "DataModel", e: "Employee", day: str, st: int, en: int,
                             assignments: List["Assignment"], label: str = "") -> bool:
@@ -1092,8 +1138,11 @@ class Settings:
 @dataclass
 class NdMinorRuleConfig:
     enforce: bool = True
-    # School week toggle affects 14-15 weekly hour limit.
+    # School week toggle affects weekly minor hour limits.
     is_school_week: bool = True
+    state_code: str = "ND"
+    mode: str = "nd_legacy"
+    caps_by_minor: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -5093,7 +5142,8 @@ def generate_schedule(model: DataModel, label: str,
                     if en > DAY_TICKS:
                         continue
                     min_delta, pref_delta = _candidate_demand_delta(day, area, st, en, coverage)
-                    if min_delta < 2:
+                    # Allow 30-minute deficit repairs when legal.
+                    if min_delta < 1:
                         continue
                     day_load = float(_daily_store_hours(assignments).get(day, 0.0) or 0.0)
                     scored_lengths.append(((float(min_delta), float(pref_delta), -day_load), int(L)))
@@ -5379,9 +5429,30 @@ def generate_schedule(model: DataModel, label: str,
 
     _record_phase_snapshot("phase5_cstore_backfill_after_carwash")
 
+    # Final specialty mop-up pass to reduce shared-labor leakage late in the solve.
+    phase_diagnostics["phase5b_kitchen_micro_backfill"] = phase_fill_area_min(
+        "KITCHEN",
+        lengths=(2,),
+        only_within_existing=False,
+        enforce_weekly_cap=True,
+        prefer_underutilized=True,
+        max_keys=2000,
+    )
+    _record_phase_snapshot("phase5b_kitchen_micro_backfill")
+
+    phase_diagnostics["phase5c_carwash_micro_backfill"] = phase_fill_area_min(
+        "CARWASH",
+        lengths=(2,),
+        only_within_existing=False,
+        enforce_weekly_cap=True,
+        prefer_underutilized=True,
+        max_keys=2000,
+    )
+    _record_phase_snapshot("phase5c_carwash_micro_backfill")
+
     uncovered_min_by_area = recompute_uncovered_maps_incremental()
 
-    def _build_contiguous_deficit_windows(area: str, min_need_ticks: int = 2) -> List[Tuple[str, int, int, int]]:
+    def _build_contiguous_deficit_windows(area: str, min_need_ticks: int = 1) -> List[Tuple[str, int, int, int]]:
         windows: List[Tuple[str, int, int, int]] = []
         for day in DAYS:
             t = 0
@@ -6731,6 +6802,77 @@ def generate_schedule(model: DataModel, label: str,
     except Exception:
         req_fp = {"min_total": 0, "pref_total": 0, "max_total": 0, "key_count": 0}
 
+    unused_legal_capacity_by_employee: Dict[str, Dict[str, Any]] = {}
+    unresolved_window_legal_summary: Dict[str, Any] = {"windows_with_legal_candidates": 0, "windows_with_zero_legal_candidates": 0, "sample_windows": []}
+    try:
+        for e in model.employees:
+            if getattr(e, "work_status", "") != "Active" or not bool(getattr(e, "wants_hours", True)):
+                continue
+            max_h = float(getattr(e, "max_weekly_hours", 0.0) or 0.0)
+            used_h = float(emp_hours.get(e.name, 0.0) or 0.0)
+            unused_legal_capacity_by_employee[e.name] = {
+                "used_hours": used_h,
+                "max_weekly_hours": max_h,
+                "remaining_hours": max(0.0, max_h - used_h),
+            }
+
+        cov_final = count_coverage_per_tick(assignments)
+        unresolved_windows: List[Tuple[str, str, int, int]] = []
+        for area in AREAS:
+            for day in DAYS:
+                t0 = 0
+                while t0 < DAY_TICKS:
+                    k = (day, area, int(t0))
+                    if int(cov_final.get(k, 0)) >= int(min_req.get(k, 0)):
+                        t0 += 1
+                        continue
+                    st0 = int(t0)
+                    while t0 < DAY_TICKS and int(cov_final.get((day, area, int(t0)), 0)) < int(min_req.get((day, area, int(t0)), 0)):
+                        t0 += 1
+                    unresolved_windows.append((day, area, st0, int(t0)))
+
+        for day, area, st0, en0 in unresolved_windows[:40]:
+            legal_candidates: List[str] = []
+            for e in model.employees:
+                if getattr(e, "work_status", "") != "Active" or not bool(getattr(e, "wants_hours", True)):
+                    continue
+                if area not in (getattr(e, "areas_allowed", []) or []):
+                    continue
+                min_h_emp = float(getattr(e, "min_hours_per_shift", 1.0) or 1.0)
+                seg_ticks = max(1, int(math.ceil(min_h_emp * TICKS_PER_HOUR)))
+                if st0 + seg_ticks > DAY_TICKS:
+                    continue
+                found = False
+                start_probe = max(0, st0 - seg_ticks + 1)
+                end_probe = min(st0, DAY_TICKS - seg_ticks)
+                for pst in range(start_probe, end_probe + 1):
+                    pen = int(pst + seg_ticks)
+                    if pen <= st0 or pst >= en0:
+                        continue
+                    trial_a = Assignment(day, area, int(pst), int(pen), e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE)
+                    trial = assignments + [trial_a]
+                    hard_bad = False
+                    for v in evaluate_schedule_hard_rules(model, label, trial, include_override_warnings=False):
+                        if v.severity == "error" and is_engine_managed_source(v.assignment_source):
+                            hard_bad = True
+                            break
+                    if not hard_bad:
+                        found = True
+                        break
+                if found:
+                    legal_candidates.append(e.name)
+            if legal_candidates:
+                unresolved_window_legal_summary["windows_with_legal_candidates"] += 1
+            else:
+                unresolved_window_legal_summary["windows_with_zero_legal_candidates"] += 1
+            if len(unresolved_window_legal_summary["sample_windows"]) < 10:
+                unresolved_window_legal_summary["sample_windows"].append({
+                    "day": day, "area": area, "start_t": int(st0), "end_t": int(en0),
+                    "legal_candidates": sorted(legal_candidates)
+                })
+    except Exception:
+        pass
+
     diagnostics = {
     "min_short": int(min_short2) if 'min_short2' in locals() else int(unfilled),
     "pref_short": int(pref_short2) if 'pref_short2' in locals() else 0,
@@ -6750,6 +6892,9 @@ def generate_schedule(model: DataModel, label: str,
     "participation_attempt_stats": dict(participation_attempt_stats) if 'participation_attempt_stats' in locals() else {},
     "unscheduled_active_opted_in": [e.name for e in model.employees if e.work_status == "Active" and bool(getattr(e, "wants_hours", True)) and float(emp_hours.get(e.name, 0.0) or 0.0) <= 1e-9],
     "repair_stats": dict(repair_stats) if 'repair_stats' in locals() else {},
+
+    "unused_legal_capacity_by_employee": dict(unused_legal_capacity_by_employee),
+    "unresolved_window_legal_summary": dict(unresolved_window_legal_summary),
 
     # Phase 3 toggles/weights (for debugging & explainability)
     "enable_coverage_risk_protection": bool(enable_risk) if 'enable_risk' in locals() else False,
@@ -6813,79 +6958,117 @@ def assignments_by_area_day(assignments: List[Assignment]) -> Dict[str, Dict[str
 
 def make_one_page_html(model: DataModel, label: str, assignments: List[Assignment]) -> str:
     by = assignments_by_area_day(assignments)
+    area_colors = _normalize_area_colors(getattr(model.store_info, "area_colors", {}) or {})
+    cstore_color = area_colors.get("CSTORE", _default_area_colors().get("CSTORE", "#2b5dff"))
+    kitchen_color = area_colors.get("KITCHEN", _default_area_colors().get("KITCHEN", "#d97706"))
+    carwash_color = area_colors.get("CARWASH", _default_area_colors().get("CARWASH", "#0f766e"))
+
     title = f"{html_escape(model.store_info.store_name or 'Labor Force Scheduler')} — {html_escape(label)}"
     sub = html_escape(model.store_info.store_address)
     phone = html_escape(model.store_info.store_phone)
     mgr = html_escape(model.store_info.store_manager)
 
-    def area_section(area: str) -> str:
+    def _area_rows(area: str, compact: bool = False) -> str:
         rows = []
         for d in DAYS:
             items = by.get(area, {}).get(d, [])
             if not items:
-                rows.append(f"<tr><td class='day'>{d}</td><td class='cell empty' colspan='2'>—</td></tr>")
+                rows.append(f"<tr><td class='day'>{d}</td><td class='cell empty'>OFF</td></tr>")
                 continue
-            for i,a in enumerate(items):
-                name = html_escape(a.employee_name)
-                tm = f"{tick_to_hhmm(a.start_t)}–{tick_to_hhmm(a.end_t)}"
-                if i==0:
-                    rows.append(f"<tr><td class='day' rowspan='{len(items)}'>{d}</td><td class='cell name'>{name}</td><td class='cell time'>{tm}</td></tr>")
-                else:
-                    rows.append(f"<tr><td class='cell name'>{name}</td><td class='cell time'>{tm}</td></tr>")
-        return f"""
-        <div class="section">
-          <h2>{area}</h2>
-          <table>
-            <thead><tr><th style="width:64px;">Day</th><th>Employee</th><th style="width:110px;">Time</th></tr></thead>
-            <tbody>
-              {''.join(rows)}
-            </tbody>
-          </table>
-        </div>
-        """
+            chunks = []
+            for a in items:
+                chunks.append(
+                    f"<div class='slot'><span class='emp'>{html_escape(a.employee_name)}</span>"
+                    f"<span class='tm'>{tick_to_hhmm(a.start_t)}–{tick_to_hhmm(a.end_t)}</span></div>"
+                )
+            cls = "cell compact" if compact else "cell"
+            rows.append(f"<tr><td class='day'>{d}</td><td class='{cls}'>{''.join(chunks)}</td></tr>")
+        return ''.join(rows)
 
-    css = """
+    css = f"""
     <style>
-      @page { size: landscape; margin: 0.35in; }
-      body { font-family: Arial, sans-serif; }
-      .hdr { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:10px; }
-      .title { font-size: 18px; font-weight: 700; }
-      .sub { font-size: 12px; color:#444; margin-top:2px; }
-      .meta { font-size: 12px; color:#444; text-align:right; }
-      .grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
-      h2 { margin: 0 0 6px 0; font-size: 14px; }
-      table { width:100%; border-collapse: collapse; table-layout: fixed; }
-      th, td { border: 1px solid #222; padding: 3px 5px; font-size: 11px; }
-      th { background: #f3f3f3; }
-      td.day { font-weight: 700; text-align:center; background:#fafafa; }
-      td.cell.empty { color:#666; text-align:center; }
-      td.cell.name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      td.cell.time { text-align:center; }
-      .foot { margin-top:8px; font-size: 10px; color:#555; }
+      @page portraitPage {{ size: 8.5in 11in; margin: 0.35in; }}
+      @page landscapePage {{ size: 11in 8.5in; margin: 0.35in; }}
+      body {{ font-family: 'Segoe UI', Arial, sans-serif; color:#1b1f23; margin:0; }}
+      .page {{ page-break-after: always; }}
+      .page:last-child {{ page-break-after: auto; }}
+      .page.portrait {{ page: portraitPage; }}
+      .page.landscape {{ page: landscapePage; }}
+      .hdr {{ display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px; }}
+      .title {{ font-size: 25px; font-weight: 800; }}
+      .sub {{ font-size: 13px; color:#4b5563; margin-top:2px; }}
+      .meta {{ text-align:right; font-size: 13px; color:#374151; }}
+      .area-banner {{ text-align:center; font-size: 32px; font-weight: 900; letter-spacing: 0.6px; margin: 8px 0 10px; }}
+      .area-banner.cstore {{ color: {cstore_color}; }}
+      .area-banner.kitchen {{ color: {kitchen_color}; }}
+      .area-banner.carwash {{ color: {carwash_color}; }}
+      table {{ width:100%; border-collapse: collapse; table-layout: fixed; }}
+      th, td {{ border: 2px solid #222; padding: 8px; text-align:center; vertical-align: middle; }}
+      th {{ background:#f3f4f6; font-size: 16px; }}
+      td.day {{ width: 10%; font-weight: 800; font-size: 18px; background:#f8fafc; }}
+      td.cell {{ font-size: 16px; line-height: 1.35; }}
+      td.cell.compact {{ font-size: 14px; line-height: 1.25; }}
+      .slot {{ display:flex; justify-content:center; gap:10px; align-items:center; margin:2px 0; }}
+      .slot .emp {{ font-weight: 700; }}
+      .slot .tm {{ font-weight: 600; color:#374151; }}
+      td.cell.empty {{ font-weight: 700; color:#6b7280; }}
+      .stack-section {{ margin-top: 6px; }}
+      .stack-section + .stack-section {{ margin-top: 18px; }}
+      .foot {{ margin-top:8px; text-align:center; color:#4b5563; font-size:12px; }}
     </style>
     """
-    html = f"""
-    <html><head><meta charset="utf-8">{css}</head>
-    <body>
-      <div class="hdr">
-        <div>
-          <div class="title">{title}</div>
-          <div class="sub">{sub}</div>
+
+    return f"""
+    <html><head><meta charset='utf-8'>{css}</head><body>
+      <div class='page portrait'>
+        <div class='hdr'>
+          <div>
+            <div class='title'>{title}</div>
+            <div class='sub'>{sub}</div>
+          </div>
+          <div class='meta'>
+            <div>Store: {phone}</div>
+            <div>Manager: {mgr}</div>
+          </div>
         </div>
-        <div class="meta">
-          <div>Store: {phone}</div>
-          <div>Manager: {mgr}</div>
+        <div class='area-banner cstore'>C-STORE SCHEDULE</div>
+        <table>
+          <thead><tr><th>Day</th><th>Assigned Team & Times</th></tr></thead>
+          <tbody>{_area_rows('CSTORE')}</tbody>
+        </table>
+        <div class='foot'>Generated {today_iso()} • Color coding preserved by department palette.</div>
+      </div>
+
+      <div class='page landscape'>
+        <div class='hdr'>
+          <div>
+            <div class='title'>{title}</div>
+            <div class='sub'>{html_escape(label)} • Kitchen + Carwash consolidated</div>
+          </div>
+          <div class='meta'>
+            <div>Store: {phone}</div>
+            <div>Manager: {mgr}</div>
+          </div>
+        </div>
+
+        <div class='stack-section'>
+          <div class='area-banner kitchen'>KITCHEN</div>
+          <table>
+            <thead><tr><th>Day</th><th>Assigned Team & Times</th></tr></thead>
+            <tbody>{_area_rows('KITCHEN', compact=True)}</tbody>
+          </table>
+        </div>
+
+        <div class='stack-section'>
+          <div class='area-banner carwash'>CARWASH</div>
+          <table>
+            <thead><tr><th>Day</th><th>Assigned Team & Times</th></tr></thead>
+            <tbody>{_area_rows('CARWASH', compact=True)}</tbody>
+          </table>
         </div>
       </div>
-      <div class="grid">
-        {area_section("CSTORE")}
-        {area_section("KITCHEN")}
-        {area_section("CARWASH")}
-      </div>
-      <div class="foot">Generated {today_iso()} • Times in 30-minute increments</div>
     </body></html>
     """
-    return html
 
 def export_html(model: DataModel, label: str, assignments: List[Assignment]) -> str:
     html = make_one_page_html(model, label, assignments)
@@ -7931,6 +8114,7 @@ class ContextHelpManager:
         self._bubble_win: Optional[tk.Toplevel] = None
         self._more_win: Optional[tk.Toplevel] = None
         self._short_var = tk.StringVar(value="")
+        self._leave_grace_ms = 220
 
     def register(self, widget: tk.Misc, help_id: str, short_text: str, long_text: str):
         hid = str(help_id or "").strip()
@@ -7939,7 +8123,7 @@ class ContextHelpManager:
         self._registry[hid] = {"short": str(short_text or "").strip(), "long": str(long_text or "").strip()}
         try:
             widget.bind("<Enter>", lambda _e, w=widget, h=hid: self._on_enter(w, h), add="+")
-            widget.bind("<Leave>", lambda _e: self.hide_all(), add="+")
+            widget.bind("<Leave>", lambda _e, w=widget: self._on_leave(w), add="+")
             widget.bind("<ButtonPress>", lambda _e: self.hide_all(), add="+")
             widget.bind("<FocusOut>", lambda _e: self.hide_bubble(), add="+")
             widget.bind("<Destroy>", lambda _e: self._on_widget_destroy(widget), add="+")
@@ -7955,6 +8139,21 @@ class ContextHelpManager:
         self._cancel_pending()
         self._hovered_widget = widget
         self._after_id = self.parent.after(self.delay_ms, lambda w=widget, h=help_id: self._show_if_still_hovering(w, h))
+
+    def _on_leave(self, widget: tk.Misc):
+        try:
+            px = int(widget.winfo_pointerx())
+            py = int(widget.winfo_pointery())
+            x0 = int(widget.winfo_rootx()) - 8
+            y0 = int(widget.winfo_rooty()) - 8
+            x1 = int(widget.winfo_rootx()) + int(max(1, widget.winfo_width())) + 8
+            y1 = int(widget.winfo_rooty()) + int(max(1, widget.winfo_height())) + 8
+            if x0 <= px <= x1 and y0 <= py <= y1:
+                return
+        except Exception:
+            pass
+        self._cancel_pending()
+        self.parent.after(self._leave_grace_ms, self.hide_all)
 
     def _cancel_pending(self):
         if self._after_id:
@@ -8032,13 +8231,27 @@ class ContextHelpManager:
         self._more_win = tk.Toplevel(self.parent)
         self._more_win.title("Context Help")
         self._more_win.transient(self.parent)
-        self._more_win.geometry("560x360")
+        try:
+            sw = int(self.parent.winfo_screenwidth())
+            sh = int(self.parent.winfo_screenheight())
+            self._more_win.geometry(f"{max(420, int(sw/3))}x{max(260, int(sh/5))}")
+        except Exception:
+            self._more_win.geometry("560x320")
         outer = ttk.Frame(self._more_win, padding=12)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text=short or "Help", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 8))
 
-        txt = tk.Text(outer, wrap="word", relief="solid", borderwidth=1)
-        txt.pack(fill="both", expand=True)
+        txt_wrap = ttk.Frame(outer)
+        txt_wrap.pack(fill="both", expand=True)
+        txt = tk.Text(txt_wrap, wrap="none", relief="solid", borderwidth=1)
+        ysb = ttk.Scrollbar(txt_wrap, orient="vertical", command=txt.yview)
+        xsb = ttk.Scrollbar(txt_wrap, orient="horizontal", command=txt.xview)
+        txt.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+        txt.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        xsb.grid(row=1, column=0, sticky="ew")
+        txt_wrap.rowconfigure(0, weight=1)
+        txt_wrap.columnconfigure(0, weight=1)
         txt.insert("1.0", long_text)
         txt.configure(state="disabled")
         ttk.Button(outer, text="Close", command=self._more_win.destroy).pack(anchor="e", pady=(8, 0))
@@ -8614,10 +8827,11 @@ class SchedulerApp(tk.Tk):
         self._load_brand_images()
 
         self._setup_style()
-        self.help_manager = ContextHelpManager(self, delay_ms=1300)
+        self.help_manager = ContextHelpManager(self, delay_ms=3000)
         self._help_catalog = self._build_help_catalog()
         self._build_ui()
         self._register_phase1_help_controls()
+        self._register_broad_help_controls()
         self._refresh_all()
         self._set_status(f"Data file: {self.data_path}")
 
@@ -8745,8 +8959,13 @@ class SchedulerApp(tk.Tk):
     def _load_brand_images(self):
         """Load PetroServe branding images if present in ./assets."""
         try:
-            img_path = rel_path("assets", "petroserve.png")
-            if not os.path.isfile(img_path):
+            candidates = [
+                rel_path("Assets", "header_logo.png"),
+                rel_path("assets", "header_logo.png"),
+                rel_path("assets", "petroserve.png"),
+            ]
+            img_path = next((p for p in candidates if os.path.isfile(p)), "")
+            if not img_path:
                 return
             if Image is None or ImageTk is None:
                 # Fallback: tkinter PhotoImage (no resize)
@@ -8832,6 +9051,8 @@ class SchedulerApp(tk.Tk):
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             candidates = [
+                os.path.join(base_dir, "Assets", "store_logo.png"),
+                os.path.join(base_dir, "assets", "store_logo.png"),
                 os.path.join(base_dir, "assets", "petroserve.png"),
                 os.path.join(base_dir, "petroserve.png"),
             ]
@@ -9049,7 +9270,7 @@ class SchedulerApp(tk.Tk):
         self._refresh_main_tab_chrome(key)
 
     def _build_help_catalog(self) -> Dict[str, Dict[str, str]]:
-        return {
+        defaults = {
             "new_data": {
                 "short": "Start a new dataset for scheduling.",
                 "long": "Creates a fresh in-memory dataset and clears the current week output. Use Open to return to an existing data file.",
@@ -9073,6 +9294,10 @@ class SchedulerApp(tk.Tk):
             "generate_regen": {
                 "short": "Regenerate using the current schedule as context.",
                 "long": "Runs generation again while using the current schedule context for continuity and comparison.",
+            },
+            "refine_schedule": {
+                "short": "Improve the current schedule without rebuilding from scratch.",
+                "long": "Runs a targeted refinement pass focused on weak coverage areas and practical improvements while preserving protected edits.",
             },
             "save_history": {
                 "short": "Save the current result to schedule history.",
@@ -9131,6 +9356,21 @@ class SchedulerApp(tk.Tk):
                 "long": "Copies the source day requirement pattern into selected target days for faster weekly setup.",
             },
         }
+        try:
+            hp = rel_path("help_content.json")
+            if os.path.isfile(hp):
+                with open(hp, "r", encoding="utf-8") as f:
+                    payload = json.load(f) or {}
+                if isinstance(payload, dict):
+                    for k, v in payload.items():
+                        if isinstance(v, dict) and str(v.get("short", "") or "").strip():
+                            defaults[str(k)] = {
+                                "short": str(v.get("short", "") or "").strip(),
+                                "long": str(v.get("long", "") or "").strip(),
+                            }
+        except Exception as ex:
+            _write_run_log(f"HELP | help_content.json load failed: {repr(ex)}")
+        return defaults
 
     def _register_help_control(self, widget: Optional[tk.Misc], help_id: str):
         if widget is None:
@@ -9150,6 +9390,7 @@ class SchedulerApp(tk.Tk):
             ("btn_save_now", "save_now"),
             ("btn_generate_fresh", "generate_fresh"),
             ("btn_regen_current", "generate_regen"),
+            ("btn_refine", "refine_schedule"),
             ("btn_save_history", "save_history"),
             ("btn_open_manual", "open_manual"),
             ("btn_open_heatmap", "open_heatmap"),
@@ -9173,6 +9414,55 @@ class SchedulerApp(tk.Tk):
             self._register_help_control(widgets.get("close"), "store_hours")
         for _area, btn in getattr(self, "area_color_buttons", {}).items():
             self._register_help_control(btn, "area_color")
+
+    def _register_broad_help_controls(self):
+        """First-wave broad hover-help coverage across major interactive controls."""
+        roots = [
+            getattr(self, "tab_store", None), getattr(self, "tab_reqs", None), getattr(self, "tab_emps", None),
+            getattr(self, "tab_over", None), getattr(self, "tab_gen", None), getattr(self, "tab_preview", None),
+            getattr(self, "tab_manager_tasks", None), getattr(self, "tab_perf", None), getattr(self, "tab_analysis", None),
+            getattr(self, "tab_calloff", None), getattr(self, "tab_mgr", None), getattr(self, "tab_history", None), getattr(self, "tab_settings", None),
+        ]
+        seen: Set[int] = set()
+
+        def _label_for(w: tk.Misc) -> str:
+            try:
+                txt = str(w.cget("text") or "").strip()
+                if txt:
+                    return txt
+            except Exception:
+                pass
+            try:
+                return str(w.winfo_class())
+            except Exception:
+                return "Control"
+
+        stack: List[tk.Misc] = [r for r in roots if r is not None]
+        while stack:
+            w = stack.pop()
+            try:
+                stack.extend(list(w.winfo_children()))
+            except Exception:
+                pass
+            try:
+                wid = int(w.winfo_id())
+            except Exception:
+                continue
+            if wid in seen:
+                continue
+            seen.add(wid)
+
+            if isinstance(w, (ttk.Button, ttk.Entry, ttk.Combobox, ttk.Checkbutton, ttk.Radiobutton, tk.Button, tk.Entry, tk.Checkbutton, tk.Radiobutton, tk.Text)):
+                label = _label_for(w)
+                hid = f"auto_help_{wid}"
+                short = f"{label}: quick help"
+                long_txt = (
+                    f"Control: {label}\n\n"
+                    "Use this control to update scheduler inputs or review output.\n"
+                    "Tip: after edits, Generate or Refine the week and then review warnings/heatmap."
+                )
+                self.help_manager.register(w, hid, short, long_txt)
+
 
     # -------- Store tab --------
     def _build_store_tab(self):
@@ -10647,6 +10937,10 @@ class SchedulerApp(tk.Tk):
         self.btn_generate_fresh.pack(side="left", padx=(18, 6))
         self.btn_regen_current = ttk.Button(top, text="Regenerate From Current", command=lambda: self.on_generate(mode="regenerate"))
         self.btn_regen_current.pack(side="left", padx=6)
+        self.btn_refine = ttk.Button(top, text="Refine Current Schedule", command=self.on_refine_schedule)
+        self.btn_refine.pack(side="left", padx=6)
+        self.refine_allow_manual_unlock_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="Refine may modify unlocked manual edits", variable=self.refine_allow_manual_unlock_var).pack(side="left", padx=6)
         self.btn_save_history = ttk.Button(top, text="Save to History", command=self.save_to_history)
         self.btn_save_history.pack(side="left", padx=6)
 
@@ -10654,7 +10948,7 @@ class SchedulerApp(tk.Tk):
         engine_row.pack(fill="x", padx=8, pady=(0, 8))
         self.engine_status_var = tk.StringVar(value="Engine Status: Engine Idle")
         ttk.Label(engine_row, textvariable=self.engine_status_var, foreground="#2f2f2f").pack(anchor="w")
-        self.engine_progress = ttk.Progressbar(engine_row, orient="horizontal", mode="indeterminate")
+        self.engine_progress = ttk.Progressbar(engine_row, orient="horizontal", mode="determinate", maximum=100)
         self.engine_progress.pack(fill="x", pady=(4, 0))
 
         tools_box = ttk.LabelFrame(frm, text="Schedule Workspace Tools", style="Panel.TLabelframe")
@@ -10740,7 +11034,7 @@ class SchedulerApp(tk.Tk):
         except Exception:
             pass
 
-    def _set_engine_status(self, text: str, busy: bool = False):
+    def _set_engine_status(self, text: str, busy: bool = False, pct: Optional[float] = None):
         msg = str(text or "Engine Idle").strip() or "Engine Idle"
         if not msg.lower().startswith("engine status:"):
             msg = f"Engine Status: {msg}"
@@ -10748,10 +11042,10 @@ class SchedulerApp(tk.Tk):
             self.engine_status_var.set(msg)
         if hasattr(self, "engine_progress"):
             try:
-                if busy:
-                    self.engine_progress.start(12)
-                else:
-                    self.engine_progress.stop()
+                if pct is not None:
+                    self.engine_progress["value"] = max(0.0, min(100.0, float(pct)))
+                elif not busy:
+                    self.engine_progress["value"] = 100.0 if "complete" in msg.lower() else 0.0
             except Exception:
                 pass
         try:
@@ -10760,10 +11054,10 @@ class SchedulerApp(tk.Tk):
             pass
 
     def _engine_status_start(self, text: str):
-        self._set_engine_status(text, busy=True)
+        self._set_engine_status(text, busy=True, pct=0.0)
 
     def _engine_status_stop(self, text: str = "Engine Idle"):
-        self._set_engine_status(text, busy=False)
+        self._set_engine_status(text, busy=False, pct=100.0 if "complete" in str(text).lower() else 0.0)
 
     def explain_selected_assignment(self):
         if not self.current_assignments:
@@ -11274,8 +11568,10 @@ class SchedulerApp(tk.Tk):
                 self.hm_popup_items.append(self.hm_popup_canvas.create_rectangle(x, 0, x+cell_w, header_h, fill="#e9ecef", outline="#c9c9c9"))
                 self.hm_popup_items.append(self.hm_popup_canvas.create_text(x+cell_w/2, header_h/2, text=f"{d}\\n{a[:1]}", justify="center", font=("Segoe UI", 9)))
 
-            for tck in range(DAY_TICKS):
-                y = header_h + tck*cell_h
+            cstore_open, cstore_close = area_open_close_ticks(self.model, "CSTORE")
+            vis_ticks = list(range(int(cstore_open), int(cstore_close)))
+            for row_i, tck in enumerate(vis_ticks):
+                y = header_h + row_i*cell_h
                 self.hm_popup_items.append(self.hm_popup_canvas.create_rectangle(0, y, row_header_w, y+cell_h, fill="#e9ecef", outline="#c9c9c9"))
                 self.hm_popup_items.append(self.hm_popup_canvas.create_text(row_header_w/2, y+cell_h/2, text=tick_to_hhmm(tck), font=("Segoe UI", 9)))
                 for ci, (d,a) in enumerate(col_groups):
@@ -11304,7 +11600,7 @@ class SchedulerApp(tk.Tk):
                     self.hm_popup_items.extend([r,t])
 
             total_w = row_header_w + len(col_groups)*cell_w + 2
-            total_h = header_h + DAY_TICKS*cell_h + 2
+            total_h = header_h + len(vis_ticks)*cell_h + 2
             self.hm_popup_canvas.configure(scrollregion=(0,0,total_w,total_h))
         except Exception as e:
             messagebox.showerror("Heatmap", f"Failed to render popup heatmap:\n{e}")
@@ -11421,6 +11717,86 @@ class SchedulerApp(tk.Tk):
         finally:
             if not (self.engine_status_var.get() or "").strip().endswith("Generation complete"):
                 self._engine_status_stop("Engine Idle")
+
+    def on_refine_schedule(self):
+        if not self.current_assignments:
+            messagebox.showinfo("Refine", "Generate or load a schedule first.")
+            return
+        if not self._validate_store_state_preflight():
+            return
+        label = self.current_label or self.label_var.get().strip() or self._default_week_label()
+        allow_manual = bool(getattr(self, "refine_allow_manual_unlock_var", tk.BooleanVar(value=False)).get())
+        self._set_engine_status("Refine: preparing baseline...", busy=True, pct=5)
+        baseline = list(self.current_assignments or [])
+
+        protected: List[Assignment] = []
+        for a in baseline:
+            src = assignment_provenance(a)
+            if bool(getattr(a, "locked", False)) or src == ASSIGNMENT_SOURCE_FIXED_LOCKED:
+                protected.append(copy.deepcopy(a))
+            elif (not allow_manual) and src == ASSIGNMENT_SOURCE_MANUAL:
+                protected.append(copy.deepcopy(a))
+
+        self._set_engine_status("Refine: searching targeted weak-area improvements...", busy=True, pct=35)
+
+        def _min_pref_short(assigns: List[Assignment]) -> Tuple[int, int]:
+            try:
+                mn, pr, mx = build_requirement_maps(self.model.requirements, goals=getattr(self.model, "manager_goals", None), store_info=getattr(self.model, "store_info", None))
+                cov = count_coverage_per_tick(assigns)
+                ms, ps, _ = compute_requirement_shortfalls(mn, pr, mx, cov)
+                return int(ms), int(ps)
+            except Exception:
+                return (10**9, 10**9)
+
+        base_min_short, base_pref_short = _min_pref_short(baseline)
+        best_assigns = list(baseline)
+        best_diag: Dict[str, Any] = {}
+        best_key = (base_min_short, base_pref_short, -int(len(baseline)))
+        pass_diags: List[Dict[str, Any]] = []
+
+        working = list(baseline)
+        for _pass in range(2):
+            improved, diag = improve_weak_areas(self.model, label, working)
+            if protected:
+                improved, _removed = self._overlay_preserved_assignments(improved, protected)
+            ms, ps = _min_pref_short(improved)
+            key = (ms, ps, -int(len(improved)))
+            pass_diags.append({"min_short": ms, "pref_short": ps, "diagnostics": dict(diag or {})})
+            if key < best_key:
+                best_key = key
+                best_assigns = list(improved)
+                best_diag = dict(diag or {})
+            working = list(improved)
+
+        self._set_engine_status("Refine: preserving protected edits...", busy=True, pct=70)
+        refined = list(best_assigns)
+
+        self._set_engine_status("Refine: validating and applying...", busy=True, pct=90)
+        self.current_assignments = list(refined or [])
+        self.current_emp_hours, self.current_total_hours, self.current_filled, self.current_total_slots = calc_schedule_stats(self.model, self.current_assignments)
+        self.current_diagnostics = dict(self.current_diagnostics or {})
+        new_min_short, new_pref_short = _min_pref_short(self.current_assignments)
+        self.current_diagnostics["refine_run"] = {
+            "allow_unlocked_manual_modifications": bool(allow_manual),
+            "protected_count": int(len(protected)),
+            "baseline_min_short": int(base_min_short),
+            "baseline_pref_short": int(base_pref_short),
+            "post_min_short": int(new_min_short),
+            "post_pref_short": int(new_pref_short),
+            "passes": pass_diags,
+            "selected_pass_diagnostics": dict(best_diag or {}),
+        }
+        self.current_warnings = list(self.current_warnings or [])
+        self.current_warnings.append(
+            f"Refine completed (manual unlocked edits {'allowed' if allow_manual else 'protected'})."
+        )
+        self._apply_current_schedule_to_output_views()
+        try:
+            self._refresh_schedule_analysis()
+            self._refresh_change_viewer()
+        except Exception:
+            pass
+        self._set_engine_status("Refine complete", busy=False, pct=100)
 
     def _build_analyzer_findings(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -11646,7 +12022,7 @@ class SchedulerApp(tk.Tk):
                 except Exception:
                     forecast_used = {}
             if not _suppress_progress:
-                self._set_engine_status("Running solver...", busy=True)
+                self._set_engine_status("Running solver...", busy=True, pct=55)
             if bool(getattr(self.model.settings, "enable_multi_scenario_generation", True)):
                 assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule_multi_scenario(model_for_generation, label, prev_tick_map=prev_tick_map)
             else:
@@ -11675,7 +12051,7 @@ class SchedulerApp(tk.Tk):
         self.current_total_slots = total_slots
         self.current_diagnostics = diag
         if not _suppress_progress:
-            self._set_engine_status("Balancing coverage...", busy=True)
+            self._set_engine_status("Balancing coverage...", busy=True, pct=80)
         # Store last run summary for Diagnostics (Milestone 0 helper)
         self.last_solver_summary = {
             'label': label,
@@ -13216,8 +13592,10 @@ class SchedulerApp(tk.Tk):
                 t = self.hm_canvas.create_text(x+cell_w/2, y0+header_h/2, text=label, justify="center", font=("Segoe UI", 9))
                 self.hm_items.extend([r,t])
             # row header + grid
-            for tck in range(DAY_TICKS):
-                y = header_h + tck*cell_h
+            cstore_open, cstore_close = area_open_close_ticks(self.model, "CSTORE")
+            vis_ticks = list(range(int(cstore_open), int(cstore_close)))
+            for row_i, tck in enumerate(vis_ticks):
+                y = header_h + row_i*cell_h
                 # time label
                 time_lbl = tick_to_hhmm(tck)
                 r0 = self.hm_canvas.create_rectangle(0, y, row_header_w, y+cell_h, fill="#e9ecef", outline="#c9c9c9")
@@ -13269,7 +13647,7 @@ class SchedulerApp(tk.Tk):
                     self.hm_items.extend([r,tt])
 
             total_w = row_header_w + n_cols*cell_w + 2
-            total_h = header_h + DAY_TICKS*cell_h + 2
+            total_h = header_h + len(vis_ticks)*cell_h + 2
             self.hm_canvas.configure(scrollregion=(0,0,total_w,total_h))
         except Exception as e:
             try:
@@ -13745,6 +14123,7 @@ class SchedulerApp(tk.Tk):
         ttk.Button(top, text="Load From Current Schedule", command=self._manual_load_btn).pack(side="left")
         ttk.Button(top, text="Analyze Manual Edits", command=self._manual_analyze_btn).pack(side="left", padx=8)
         ttk.Button(top, text="Apply To Current Schedule", command=self._manual_apply_btn).pack(side="left", padx=8)
+        ttk.Button(top, text="Refine Current Schedule", command=self.on_refine_schedule).pack(side="left", padx=8)
         ttk.Button(top, text="Save Manual Edits", command=self._manual_save_btn).pack(side="left", padx=8)
         ttk.Button(top, text="Open Manual Employee Calendar (HTML)", command=self._manual_open_html).pack(side="left", padx=8)
         ttk.Button(top, text="Clear Manual Edits", command=self._manual_clear_btn).pack(side="left", padx=8)
