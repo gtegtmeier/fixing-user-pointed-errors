@@ -1,0 +1,42 @@
+{
+  "generate_fresh": {
+    "short": "Build a brand-new weekly schedule from current rules.",
+    "long": "Use Generate Fresh when you want the solver to create a new baseline schedule for the selected week label.\n\nBest practice:\n1) Confirm staffing requirements and store hours first.\n2) Generate Fresh.\n3) Review warnings and heatmap.\n4) Use Refine to improve weak spots before publishing."
+  },
+  "generate_regen": {
+    "short": "Regenerate while preserving context from current schedule.",
+    "long": "Regenerate From Current creates a new schedule while preserving continuity context from the current schedule.\n\nUse this when requirements changed and you want an updated schedule without manually rebuilding everything."
+  },
+  "open_heatmap": {
+    "short": "Open the coverage heatmap for demand vs scheduled staffing.",
+    "long": "The heatmap compares scheduled staffing to requirement targets by day/time/area.\n\nRed indicates under-minimum coverage.\nUse this first to find where labor is missing."
+  },
+  "open_manual": {
+    "short": "Open manual editing tools in a popup.",
+    "long": "Manual Edit lets managers adjust cells directly.\n\nRecommended sequence:\n- Load current schedule\n- Make edits\n- Analyze warnings\n- Apply changes\n- Refine if needed"
+  },
+  "save_history": {
+    "short": "Store current week result in schedule history.",
+    "long": "Saves this version for later comparison and rollback support.\n\nUse after major milestones (post-generate, post-refine, pre-publish)."
+  },
+  "store_state": {
+    "short": "Select the store state used for labor-law enforcement.",
+    "long": "Only the selected Store-state profile is applied at runtime.\n\nIf a profile is incomplete, the app safely falls back to conservative defaults."
+  },
+  "store_hours": {
+    "short": "Define C-Store/Kitchen/Carwash operating windows.",
+    "long": "Hours of operation are hard scheduling boundaries and control visible heatmap hours.\n\nSet these before applying requirement patterns."
+  },
+  "req_apply": {
+    "short": "Apply staffing pattern to selected days.",
+    "long": "Writes Min/Preferred/Max requirement blocks for the selected area, days, and time range.\n\nUse this for quick week setup and repeatable templates."
+  },
+  "req_copy": {
+    "short": "Copy one day's requirement pattern to other days.",
+    "long": "Useful when weekday demand patterns are similar.\n\nCopy, then make small per-day adjustments for peaks and events."
+  },
+  "refine_schedule": {
+    "short": "Refine current schedule to improve weak spots.",
+    "long": "Refine keeps the current schedule as baseline and applies targeted improvements.\n\nBy default manual edits are protected; enable the toggle only if you want refine to adjust unlocked manual entries."
+  }
+}
