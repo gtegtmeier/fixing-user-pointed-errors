@@ -108,6 +108,21 @@ class SolverBiasRegressionTests(unittest.TestCase):
         self.assertTrue(cov.get("parity_ok", False))
         self.assertEqual(cov.get("solver_total_ticks"), cov.get("heatmap_total_ticks"))
 
+    def test_refine_targeting_preserves_manual_assignments(self):
+        model = mod.DataModel()
+        model.employees = [_employee("A", ["CSTORE"]), _employee("B", ["CSTORE"])]
+        model.requirements = [mod.RequirementBlock("Mon", "CSTORE", 16, 24, 1, 1, 2)]
+        manual = mod.Assignment("Mon", "CSTORE", 16, 20, "A", False, mod.ASSIGNMENT_SOURCE_MANUAL)
+        refined, diag = mod.improve_weak_areas(model, "Week", [manual], protect_manual=True)
+        self.assertIn(manual, refined)
+        self.assertTrue(diag.get("protected_preserved", False))
+
+    def test_runtime_diagnostics_helper_records_seconds(self):
+        diag = mod._set_runtime_metric({}, "refine", 1.2345, passes=2)
+        self.assertIn("runtime_diagnostics", diag)
+        self.assertAlmostEqual(diag["runtime_diagnostics"]["refine"]["seconds"], 1.2345, places=4)
+        self.assertEqual(diag["runtime_diagnostics"]["refine"]["passes"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
