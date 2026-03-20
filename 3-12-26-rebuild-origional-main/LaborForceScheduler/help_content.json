@@ -38,5 +38,29 @@
   "refine_schedule": {
     "short": "Refine current schedule to improve weak spots.",
     "long": "Refine keeps the current schedule as baseline and applies targeted improvements.\n\nBy default manual edits are protected; enable the toggle only if you want refine to adjust unlocked manual entries."
+  },
+  "calloff_simulator": {
+    "short": "Review backup staffing options before someone calls out.",
+    "long": "Call-Off Simulator shows where the week is already thin and which employees are the best manager backup options.\n\nUse it before publishing and again when real call-offs happen."
+  },
+  "manager_report_export": {
+    "short": "Open the manager review report with publish-readiness details.",
+    "long": "This report summarizes publish readiness, shortage windows, and call-list suggestions in plain manager language.\n\nUse it after Generate or Refine and before locking the final schedule."
+  },
+  "publish_final": {
+    "short": "Lock this week as the published final schedule.",
+    "long": "Publish Final saves the current week as the final manager-approved version used for review, reprint, and next-week continuity.\n\nDo this only after you review readiness, warnings, and major coverage gaps."
+  },
+  "load_final": {
+    "short": "Reload the already-published final for this week.",
+    "long": "Load Final restores the saved final schedule for the current week so a manager can review, compare, or re-export the approved version."
+  },
+  "reprint_final": {
+    "short": "Rebuild exports from the published final schedule.",
+    "long": "Reprint Final recreates printable outputs from the saved final without asking the solver to regenerate the week."
+  },
+  "print_html": {
+    "short": "Open the printable schedule in your default browser/app.",
+    "long": "Open Print View exports the main HTML schedule and then tries to open it locally using the safest available method for your operating system."
   }
 }

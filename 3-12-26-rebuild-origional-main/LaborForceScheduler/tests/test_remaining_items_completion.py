@@ -1,7 +1,9 @@
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 MOD_PATH = pathlib.Path(__file__).resolve().parents[1] / "scheduler_app_v3_final.py"
 spec = importlib.util.spec_from_file_location("scheduler_app_v3_final", MOD_PATH)
@@ -11,6 +13,50 @@ spec.loader.exec_module(mod)
 
 
 class RemainingItemsCompletionTests(unittest.TestCase):
+    def test_local_file_uri_uses_file_scheme(self):
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+            tmp.write(b"ok")
+            tmp_path = tmp.name
+        try:
+            uri = mod._local_file_uri(tmp_path)
+            self.assertTrue(uri.startswith("file:"))
+            self.assertIn(pathlib.Path(tmp_path).name, uri)
+        finally:
+            pathlib.Path(tmp_path).unlink(missing_ok=True)
+
+    def test_open_local_export_file_falls_back_to_file_uri(self):
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+            tmp.write(b"<html></html>")
+            tmp_path = tmp.name
+        try:
+            with mock.patch.object(mod.os, "startfile", side_effect=AttributeError, create=True), \
+                 mock.patch.object(mod.subprocess, "Popen", side_effect=OSError("no opener")), \
+                 mock.patch.object(mod.webbrowser, "open", side_effect=[True]) as web_open:
+                self.assertTrue(mod.open_local_export_file(tmp_path))
+                self.assertTrue(str(web_open.call_args[0][0]).startswith("file:"))
+        finally:
+            pathlib.Path(tmp_path).unlink(missing_ok=True)
+
+    def test_manager_report_includes_publish_readiness_summary(self):
+        m = mod.DataModel()
+        html = mod.make_manager_report_html(m, "Week", [])
+        self.assertIn("Publish Readiness", html)
+        self.assertIn("Required gaps", html)
+
+    def test_manager_readiness_summary_marks_required_gaps_not_ready(self):
+        m = mod.DataModel()
+        summary = mod.build_manager_readiness_summary(
+            m,
+            "Week",
+            [],
+            diagnostics={"min_short": 2, "final_schedule_valid": True},
+            warnings=[],
+            filled_slots=8,
+            total_slots=10,
+        )
+        self.assertEqual(summary["status"], "Not Ready to Publish")
+        self.assertIn("Required coverage gaps: 2", summary["plain_text"])
+
     def test_print_html_has_two_page_layout_markers(self):
         m = mod.DataModel()
         html = mod.make_one_page_html(m, "Week", [])

@@ -392,12 +392,39 @@ def _build_export_filename(prefix: str, label: str, ext: str) -> str:
     label_token = _safe_export_label_token(label)
     return f"{prefix}_{date_token}_{label_token}.{ext}"
 
+def _local_file_uri(path: str) -> str:
+    try:
+        return pathlib.Path(os.path.abspath(path)).resolve().as_uri()
+    except Exception:
+        return ""
+
 def open_local_export_file(path: str) -> bool:
     """Open a local export file in the default browser/app (best effort)."""
     try:
         if not path or not os.path.isfile(path):
             return False
         abs_path = os.path.abspath(path)
+        if sys.platform.startswith("win") and hasattr(os, "startfile"):
+            try:
+                os.startfile(abs_path)  # type: ignore[attr-defined]
+                return True
+            except Exception:
+                pass
+        opener = []
+        if sys.platform == "darwin":
+            opener = ["open", abs_path]
+        elif os.name == "posix":
+            opener = ["xdg-open", abs_path]
+        if opener:
+            try:
+                proc = subprocess.Popen(opener)
+                if proc.poll() is None or proc.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        file_uri = _local_file_uri(abs_path)
+        if file_uri and webbrowser.open(file_uri):
+            return True
         return bool(webbrowser.open(abs_path))
     except Exception:
         return False
@@ -7650,6 +7677,91 @@ def export_employee_calendar_html_with_overrides(model: DataModel, label: str, a
         f.write(html)
     return path
 
+def build_manager_readiness_summary(
+    model: DataModel,
+    label: str,
+    assignments: List[Assignment],
+    diagnostics: Optional[Dict[str, Any]] = None,
+    warnings: Optional[List[str]] = None,
+    filled_slots: Optional[int] = None,
+    total_slots: Optional[int] = None,
+) -> Dict[str, Any]:
+    diag = dict(diagnostics or {})
+    warn_list = [str(w).strip() for w in (warnings or []) if str(w).strip()]
+    filled = int(filled_slots if filled_slots is not None else len(assignments))
+    total = int(total_slots if total_slots is not None else len(assignments))
+    if total <= 0:
+        try:
+            _emp_hours, _total_hours, filled, total = calc_schedule_stats(model, assignments)
+        except Exception:
+            filled = int(len(assignments))
+            total = int(len(assignments))
+    coverage_pct = (float(filled) / float(total) * 100.0) if total > 0 else 100.0
+    min_short = max(0, int(diag.get("min_short", 0) or 0))
+    pref_short = max(0, int(diag.get("pref_short", 0) or 0))
+    max_viol = max(0, int(diag.get("max_viol", 0) or 0))
+    hard_viol = max(0, int(diag.get("engine_hard_violation_count", diag.get("engine_hard_violations", 0)) or 0))
+    override_warn = max(0, int(diag.get("override_warning_count", diag.get("override_rule_warnings", 0)) or 0))
+    cap_blocked = max(0, int(diag.get("cap_blocked_attempts", 0) or 0))
+    final_valid = bool(diag.get("final_schedule_valid", hard_viol == 0))
+    status = "Ready to Publish"
+    publish_ready = True
+    if not final_valid or hard_viol > 0 or min_short > 0:
+        status = "Not Ready to Publish"
+        publish_ready = False
+    elif pref_short > 0 or max_viol > 0 or override_warn > 0 or cap_blocked > 0 or warn_list:
+        status = "Publish With Review"
+
+    headline = []
+    if publish_ready and status == "Ready to Publish":
+        headline.append("Minimum coverage is fully met and no engine hard-rule failures were detected.")
+    if min_short > 0:
+        headline.append(f"{min_short} required 30-minute coverage block(s) are still uncovered.")
+    if hard_viol > 0:
+        headline.append(f"{hard_viol} engine hard-rule violation(s) remain.")
+    if pref_short > 0:
+        headline.append(f"{pref_short} preferred coverage block(s) are below target.")
+    if max_viol > 0:
+        headline.append(f"{max_viol} block(s) exceed the configured max staffing ceiling.")
+    if override_warn > 0:
+        headline.append(f"{override_warn} manager override warning(s) should be reviewed before publish.")
+    if cap_blocked > 0:
+        headline.append(f"Labor caps blocked {cap_blocked} placement attempt(s) during solve/refine.")
+    if not headline:
+        headline.append("Review complete. No additional publish blockers were detected from the current diagnostics.")
+
+    plain_lines = [
+        f"Publish readiness: {status}",
+        f"Coverage: {coverage_pct:.1f}% ({filled}/{total} required blocks filled)",
+        f"Required coverage gaps: {min_short}",
+        f"Preferred coverage gaps: {pref_short}",
+        f"Max staffing warnings: {max_viol}",
+        f"Hard-rule failures: {hard_viol}",
+        f"Override warnings: {override_warn}",
+    ]
+    if cap_blocked > 0:
+        plain_lines.append(f"Labor-cap blocked attempts: {cap_blocked}")
+    if warn_list:
+        plain_lines.append("Top warnings:")
+        for item in warn_list[:3]:
+            plain_lines.append(f"- {item}")
+
+    return {
+        "status": status,
+        "publish_ready": bool(publish_ready),
+        "coverage_pct": float(coverage_pct),
+        "filled_slots": int(filled),
+        "total_slots": int(total),
+        "min_short": int(min_short),
+        "pref_short": int(pref_short),
+        "max_viol": int(max_viol),
+        "hard_violations": int(hard_viol),
+        "override_warnings": int(override_warn),
+        "cap_blocked_attempts": int(cap_blocked),
+        "headline": list(headline),
+        "plain_text": "\n".join(plain_lines),
+    }
+
 def _req_sched_counts(model: DataModel, assignments: List[Assignment]) -> Tuple[Dict[Tuple[str,str,int], int],
                                                                               Dict[Tuple[str,str,int], int]]:
     # key: (day, area, tick)
@@ -7694,6 +7806,7 @@ def active_manager_tasks_for_label(model: DataModel, label: str) -> List[Manager
 def make_manager_report_html(model: DataModel, label: str, assignments: List[Assignment]) -> str:
     goals = model.manager_goals
     req, sched = _req_sched_counts(model, assignments)
+    _req_min, pref_req, max_req = build_requirement_maps(model.requirements, goals=getattr(model, "manager_goals", None), store_info=getattr(model, "store_info", None))
 
     def _hours_to_blocks(hours: float) -> int:
         try:
@@ -7836,6 +7949,19 @@ def make_manager_report_html(model: DataModel, label: str, assignments: List[Ass
     goal = float(goals.coverage_goal_pct)
     bar_pct = max(0.0, min(100.0, coverage_pct))
     status = "GOOD" if coverage_pct >= goal else "BELOW GOAL"
+    readiness = build_manager_readiness_summary(
+        model,
+        label,
+        assignments,
+        diagnostics={
+            "min_short": int(sum(1 for (_k, req_v) in req.items() if int(sched.get(_k, 0) or 0) < int(req_v or 0))),
+            "pref_short": int(sum(max(0, int(pref_req.get(k, 0) or 0) - int(sched.get(k, 0) or 0)) for k in pref_req.keys())),
+            "max_viol": int(sum(1 for k, mx in max_req.items() if int(mx or 0) > 0 and int(sched.get(k, 0) or 0) > int(mx or 0))),
+        },
+        filled_slots=int(blocks_met),
+        total_slots=int(total_req_blocks),
+    )
+    readiness_items = "".join(f"<li>{html_escape(line)}</li>" for line in readiness.get("headline", []))
 
     css = """
     <style>
@@ -7913,6 +8039,15 @@ def make_manager_report_html(model: DataModel, label: str, assignments: List[Ass
           <div style="margin-top:6px;">Hard Weekly Labor Cap: <b>{(_hours_to_blocks(hard_weekly_cap) if hard_weekly_cap > 0.0 else 'Disabled')}</b></div>
           <div>Actual Scheduled Hours: <b>{_hours_to_blocks(actual_scheduled_hours)}</b></div>
           <div>Remaining Labor Budget: <b>{(_hours_to_blocks(remaining_budget_hours) if hard_weekly_cap > 0.0 else 'N/A')}</b></div>
+        </div>
+
+        <div class="card">
+          <h3>Publish Readiness</h3>
+          <div>Status: <b>{html_escape(str(readiness.get("status", "Review")))}</b></div>
+          <div style="margin-top:6px;">Required gaps: <b>{int(readiness.get("min_short", 0) or 0)}</b> • Preferred gaps: <b>{int(readiness.get("pref_short", 0) or 0)}</b></div>
+          <div>Max warnings: <b>{int(readiness.get("max_viol", 0) or 0)}</b> • Hard-rule failures: <b>{int(readiness.get("hard_violations", 0) or 0)}</b></div>
+          <div>Override warnings: <b>{int(readiness.get("override_warnings", 0) or 0)}</b></div>
+          <ul>{readiness_items}</ul>
         </div>
 
         <div class="card">
@@ -8858,7 +8993,7 @@ class SchedulerApp(tk.Tk):
         self._load_brand_images()
 
         self._setup_style()
-        self.help_manager = ContextHelpManager(self, delay_ms=3000)
+        self.help_manager = ContextHelpManager(self, delay_ms=1200)
         self._help_catalog = self._build_help_catalog()
         self._build_ui()
         self._register_phase1_help_controls()
@@ -9024,6 +9159,34 @@ class SchedulerApp(tk.Tk):
             self.brand_img_store = None
             self.brand_source_image = None
 
+    def _brand_fallback_copy(self, variant: str = "default") -> Tuple[str, str]:
+        store_info = getattr(self, "model", None)
+        store_name = ""
+        try:
+            store_name = str(getattr(getattr(store_info, "store_info", None), "store_name", "") or "").strip()
+        except Exception:
+            store_name = ""
+        title = store_name or "LaborForceScheduler"
+        subtitle = "Manager scheduling workspace"
+        if variant == "tab":
+            subtitle = "Brand image not installed yet"
+        elif variant == "store":
+            subtitle = "Add optional logo files in Assets/ to brand this release"
+        return title, subtitle
+
+    def _render_brand_fallback(self, label_widget: Optional[ttk.Label], variant: str = "default"):
+        if label_widget is None:
+            return
+        title, subtitle = self._brand_fallback_copy(variant)
+        label_widget.configure(
+            image="",
+            text=f"{title}\n{subtitle}",
+            justify="center",
+            anchor="center",
+            padding=(18, 18),
+            style="BrandFallback.TLabel",
+        )
+
     def _brand_make_tab_photo(self, max_w: int, max_h: int):
         try:
             if max_w <= 0 or max_h <= 0:
@@ -9046,11 +9209,12 @@ class SchedulerApp(tk.Tk):
                                 max_h: int = 180,
                                 rel_w: float = 0.22,
                                 rel_h: float = 0.28) -> Optional[ttk.Label]:
-        if getattr(self, "brand_img_store", None) is None and getattr(self, "brand_source_image", None) is None:
-            return None
         try:
-            lbl = ttk.Label(host)
+            lbl = ttk.Label(host, style="BrandFallback.TLabel")
             lbl.pack(anchor="ne", pady=(2, 2))
+            if getattr(self, "brand_img_store", None) is None and getattr(self, "brand_source_image", None) is None:
+                self._render_brand_fallback(lbl, "tab")
+                return lbl
 
             def _refresh(_e=None):
                 try:
@@ -9065,10 +9229,11 @@ class SchedulerApp(tk.Tk):
                     return
                 photo = self._brand_make_tab_photo(tgt_w, tgt_h)
                 if photo is None:
+                    self._render_brand_fallback(lbl, "tab")
                     return
                 self._brand_tab_last_size[slot_key] = (tgt_w, tgt_h)
                 self._brand_tab_photo_refs[slot_key] = photo
-                lbl.configure(image=photo)
+                lbl.configure(image=photo, text="", style="TLabel")
             host.bind("<Configure>", _refresh, add="+")
             self.after_idle(_refresh)
             return lbl
@@ -9098,6 +9263,8 @@ class SchedulerApp(tk.Tk):
     def _resize_store_tab_image(self, event=None):
         try:
             if self._store_img_original is None or self._store_img_label is None or self._store_img_container is None:
+                if self._store_img_original is None and self._store_img_label is not None:
+                    self._render_brand_fallback(self._store_img_label, "store")
                 return
             c_w = int(self._store_img_container.winfo_width())
             c_h = int(self._store_img_container.winfo_height())
@@ -9148,6 +9315,7 @@ class SchedulerApp(tk.Tk):
         style.configure("HelpBubble.TFrame", background="#f6f7f9")
         style.configure("HelpBubble.TLabel", background="#f6f7f9", foreground="#283142")
         style.configure("HelpMore.TButton", padding=(6, 2))
+        style.configure("BrandFallback.TLabel", background="#eef2f6", foreground="#344054", relief="solid", borderwidth=1, font=("Segoe UI", 11, "bold"))
 
         # Shared workspace faux-tab chrome (visual-only; architecture unchanged).
         style.configure("MainTabInactive.TButton", padding=(10, 3), relief="raised")
@@ -9159,7 +9327,8 @@ class SchedulerApp(tk.Tk):
         if getattr(self, "brand_img_header", None) is not None:
             ttk.Label(topbar, image=self.brand_img_header).pack(side="left", padx=(0,10))
         else:
-            ttk.Label(topbar, text="LaborForceScheduler v3.3", style="Header.TLabel").pack(side="left")
+            fallback_title, fallback_sub = self._brand_fallback_copy("default")
+            ttk.Label(topbar, text=f"{fallback_title}\n{fallback_sub}", style="Header.TLabel", justify="left").pack(side="left")
         self.status_var = tk.StringVar(value="")
         ttk.Label(self, textvariable=self.status_var, foreground="#555").pack(anchor="w", padx=12)
 
@@ -9350,6 +9519,54 @@ class SchedulerApp(tk.Tk):
                 "short": "Compare available schedule versions.",
                 "long": "Compares generated/current/finalized versions to review differences before publishing decisions.",
             },
+            "week_label": {
+                "short": "Set the schedule week you are working on.",
+                "long": "Use a clear week label before generating, refining, exporting, or publishing so manager review stays tied to the right week.",
+            },
+            "set_this_week": {
+                "short": "Jump the week label to this Sunday.",
+                "long": "Fills the week label with the current Sunday-based week start so managers can begin a normal weekly run quickly.",
+            },
+            "refine_unlock_toggle": {
+                "short": "Allow refine to touch unlocked manual edits.",
+                "long": "Leave this off for normal manager review. Turn it on only when you want Refine to adjust manual entries that are not explicitly locked.",
+            },
+            "calloff_simulator": {
+                "short": "Review call-off backup options.",
+                "long": "Opens the call-off simulator so managers can see likely weak windows and backup employee suggestions without changing the live schedule.",
+            },
+            "print_html": {
+                "short": "Open the printable schedule view.",
+                "long": "Exports the main HTML print view and then tries to open it locally in your default browser or print-capable app.",
+            },
+            "employee_calendar_export": {
+                "short": "Open the employee calendar export.",
+                "long": "Builds the employee-facing calendar HTML and then opens it locally for review, sharing, or printing.",
+            },
+            "manager_report_export": {
+                "short": "Open the manager review report.",
+                "long": "Builds the manager report with readiness, shortage, and call-list review details and then opens it locally.",
+            },
+            "export_csv": {
+                "short": "Save the schedule as CSV.",
+                "long": "Exports the current schedule rows as CSV for spreadsheet review or downstream manager reporting.",
+            },
+            "export_pdf": {
+                "short": "Export PDF when the optional PDF library is available.",
+                "long": "Creates a PDF copy of the main schedule when ReportLab is installed. If not installed, use the HTML print view instead.",
+            },
+            "publish_final": {
+                "short": "Lock and publish this week as the final schedule.",
+                "long": "Saves the current week as the published final version used for manager review, comparisons, and next-week stability references.",
+            },
+            "load_final": {
+                "short": "Reload the published final for this week.",
+                "long": "Loads the saved final schedule for the current week so managers can review or continue from the published version.",
+            },
+            "reprint_final": {
+                "short": "Re-open exports for the published final schedule.",
+                "long": "Uses the saved final schedule for this week to rebuild printable exports without changing the active data setup.",
+            },
             "store_state": {
                 "short": "Select store state for labor-rule profile loading.",
                 "long": "State selection controls labor-law profile loading. Incomplete profiles fall back to current/default rules.",
@@ -9422,11 +9639,23 @@ class SchedulerApp(tk.Tk):
             ("btn_generate_fresh", "generate_fresh"),
             ("btn_regen_current", "generate_regen"),
             ("btn_refine", "refine_schedule"),
+            ("label_entry", "week_label"),
+            ("btn_set_this_week", "set_this_week"),
+            ("refine_allow_manual_unlock_chk", "refine_unlock_toggle"),
             ("btn_save_history", "save_history"),
             ("btn_open_manual", "open_manual"),
             ("btn_open_heatmap", "open_heatmap"),
             ("btn_open_analyzer", "open_analyzer"),
             ("btn_compare_versions", "compare_versions"),
+            ("btn_calloff_simulator", "calloff_simulator"),
+            ("btn_print_html", "print_html"),
+            ("btn_employee_calendar", "employee_calendar_export"),
+            ("btn_manager_report", "manager_report_export"),
+            ("btn_export_csv", "export_csv"),
+            ("btn_export_pdf", "export_pdf"),
+            ("btn_publish_final", "publish_final"),
+            ("btn_load_final", "load_final"),
+            ("btn_reprint_final", "reprint_final"),
             ("store_state_combo", "store_state"),
             ("req_area_combo", "req_area"),
             ("req_start_combo", "req_time"),
@@ -9620,6 +9849,8 @@ class SchedulerApp(tk.Tk):
         self._load_store_tab_image()
         self._store_img_container.bind("<Configure>", self._resize_store_tab_image, add="+")
         self.after_idle(self._resize_store_tab_image)
+        if self._store_img_original is None:
+            self._render_brand_fallback(self._store_img_label, "store")
 
         ttk.Button(frm, text="Save Store Info", command=self.save_store_info).pack(anchor="w", padx=6, pady=10)
 
@@ -10962,8 +11193,10 @@ class SchedulerApp(tk.Tk):
         top = ttk.Frame(gen_box, style="Section.TFrame"); top.pack(fill="x", padx=8, pady=8)
         self.label_var = tk.StringVar(value=self.current_label)
         ttk.Label(top, text="Week Label:").pack(side="left", padx=(0,6))
-        ttk.Entry(top, textvariable=self.label_var, width=42).pack(side="left")
-        ttk.Button(top, text="Set to This Week (Sun)", command=self.set_label_to_this_week).pack(side="left", padx=8)
+        self.label_entry = ttk.Entry(top, textvariable=self.label_var, width=42)
+        self.label_entry.pack(side="left")
+        self.btn_set_this_week = ttk.Button(top, text="Set to This Week (Sun)", command=self.set_label_to_this_week)
+        self.btn_set_this_week.pack(side="left", padx=8)
         self.btn_generate_fresh = ttk.Button(top, text="Generate Fresh", command=lambda: self.on_generate(mode="fresh"))
         self.btn_generate_fresh.pack(side="left", padx=(18, 6))
         self.btn_regen_current = ttk.Button(top, text="Regenerate From Current", command=lambda: self.on_generate(mode="regenerate"))
@@ -10971,7 +11204,8 @@ class SchedulerApp(tk.Tk):
         self.btn_refine = ttk.Button(top, text="Refine Current Schedule", command=self.on_refine_schedule)
         self.btn_refine.pack(side="left", padx=6)
         self.refine_allow_manual_unlock_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Refine may modify unlocked manual edits", variable=self.refine_allow_manual_unlock_var).pack(side="left", padx=6)
+        self.refine_allow_manual_unlock_chk = ttk.Checkbutton(top, text="Refine may modify unlocked manual edits", variable=self.refine_allow_manual_unlock_var)
+        self.refine_allow_manual_unlock_chk.pack(side="left", padx=6)
         self.btn_save_history = ttk.Button(top, text="Save to History", command=self.save_to_history)
         self.btn_save_history.pack(side="left", padx=6)
 
@@ -10993,7 +11227,8 @@ class SchedulerApp(tk.Tk):
         self.btn_open_analyzer.pack(side="left", padx=8)
         self.btn_compare_versions = ttk.Button(trow, text="Compare Versions", command=self._open_changes_popup)
         self.btn_compare_versions.pack(side="left", padx=8)
-        ttk.Button(trow, text="Call-Off Simulator", command=self._show_calloff_tab).pack(side="left", padx=8)
+        self.btn_calloff_simulator = ttk.Button(trow, text="Call-Off Simulator", command=self._show_calloff_tab)
+        self.btn_calloff_simulator.pack(side="left", padx=8)
 
         ns_box = ttk.LabelFrame(frm, text="Selected-Week No School Days", style="Panel.TLabelframe")
         ns_box.pack(fill="x", pady=(0, 8))
@@ -12292,14 +12527,22 @@ class SchedulerApp(tk.Tk):
             .pack(anchor="w", pady=(0,8))
 
         top = ttk.Frame(frm); top.pack(fill="x", pady=(0,10))
-        ttk.Button(top, text="Open Print View (HTML)", command=self.print_html).pack(side="left")
-        ttk.Button(top, text="Employee Calendar (HTML)", command=self.print_employee_calendar).pack(side="left", padx=8)
-        ttk.Button(top, text="Manager Report (HTML)", command=self.print_manager_report).pack(side="left", padx=8)
-        ttk.Button(top, text="Export CSV", command=self.export_csv_btn).pack(side="left", padx=8)
-        ttk.Button(top, text="Export PDF (if available)", command=self.export_pdf_btn).pack(side="left", padx=8)
-        ttk.Button(top, text="Lock / Publish Final Schedule", command=self._lock_publish_final_schedule).pack(side="left", padx=(20,8))
-        ttk.Button(top, text="Load Final (This Week)", command=self._load_final_schedule_this_week).pack(side="left", padx=8)
-        ttk.Button(top, text="Reprint Final", command=self._reprint_final_this_week).pack(side="left", padx=8)
+        self.btn_print_html = ttk.Button(top, text="Open Print View (HTML)", command=self.print_html)
+        self.btn_print_html.pack(side="left")
+        self.btn_employee_calendar = ttk.Button(top, text="Employee Calendar (HTML)", command=self.print_employee_calendar)
+        self.btn_employee_calendar.pack(side="left", padx=8)
+        self.btn_manager_report = ttk.Button(top, text="Manager Report (HTML)", command=self.print_manager_report)
+        self.btn_manager_report.pack(side="left", padx=8)
+        self.btn_export_csv = ttk.Button(top, text="Export CSV", command=self.export_csv_btn)
+        self.btn_export_csv.pack(side="left", padx=8)
+        self.btn_export_pdf = ttk.Button(top, text="Export PDF (if available)", command=self.export_pdf_btn)
+        self.btn_export_pdf.pack(side="left", padx=8)
+        self.btn_publish_final = ttk.Button(top, text="Lock / Publish Final Schedule", command=self._lock_publish_final_schedule)
+        self.btn_publish_final.pack(side="left", padx=(20,8))
+        self.btn_load_final = ttk.Button(top, text="Load Final (This Week)", command=self._load_final_schedule_this_week)
+        self.btn_load_final.pack(side="left", padx=8)
+        self.btn_reprint_final = ttk.Button(top, text="Reprint Final", command=self._reprint_final_this_week)
+        self.btn_reprint_final.pack(side="left", padx=8)
 
         self.export_lbl = ttk.Label(frm, text="", foreground="#555")
         self.export_lbl.pack(anchor="w")
@@ -12418,9 +12661,24 @@ class SchedulerApp(tk.Tk):
             self.out_tree.insert("", "end", values=(a.day, a.area, tick_to_hhmm(a.start_t), tick_to_hhmm(a.end_t), a.employee_name, a.source, "Yes" if a.locked else "No"))
 
         active_ct = sum(1 for e in self.model.employees if e.work_status == "Active")
-        self.summary_lbl.config(text=f"Total hours: {self.current_total_hours:.1f} • Filled slots: {self.current_filled}/{self.current_total_slots} • Assignments: {len(assigns)} • Active employees: {active_ct}")
+        readiness = build_manager_readiness_summary(
+            self.model,
+            self.current_label,
+            assigns,
+            diagnostics=getattr(self, "current_diagnostics", {}),
+            warnings=getattr(self, "current_warnings", []),
+            filled_slots=int(getattr(self, "current_filled", 0) or 0),
+            total_slots=int(getattr(self, "current_total_slots", 0) or 0),
+        )
+        self.summary_lbl.config(
+            text=f"{readiness.get('status', 'Review')} • Total hours: {self.current_total_hours:.1f} • Filled slots: {self.current_filled}/{self.current_total_slots} • Assignments: {len(assigns)} • Active employees: {active_ct}"
+        )
 
         self.warn_txt.delete("1.0", tk.END)
+        self.warn_txt.insert(tk.END, "Manager readiness summary:\n")
+        for line in str(readiness.get("plain_text", "") or "").splitlines():
+            self.warn_txt.insert(tk.END, f"  {line}\n")
+        self.warn_txt.insert(tk.END, "\n")
         self.warn_txt.insert(tk.END, "Employee weekly hours:\n")
         for n in sorted((self.current_emp_hours or {}).keys(), key=str.lower):
             self.warn_txt.insert(tk.END, f"  - {n}: {self.current_emp_hours[n]:.1f} hrs\n")
@@ -12434,9 +12692,11 @@ class SchedulerApp(tk.Tk):
         try:
             self.preview_txt.delete("1.0", tk.END)
             self.preview_txt.insert(tk.END, f"Current schedule: {self.current_label}\n")
+            self.preview_txt.insert(tk.END, f"Publish readiness: {readiness.get('status', 'Review')}\n")
             self.preview_txt.insert(tk.END, f"Assignments: {len(assigns)}\n")
             self.preview_txt.insert(tk.END, f"Total hours: {self.current_total_hours:.1f}\n")
             self.preview_txt.insert(tk.END, f"Filled slots: {self.current_filled}/{self.current_total_slots}\n")
+            self.preview_txt.insert(tk.END, f"Required gaps: {int(readiness.get('min_short', 0) or 0)} • Preferred gaps: {int(readiness.get('pref_short', 0) or 0)}\n")
         except Exception:
             pass
 
