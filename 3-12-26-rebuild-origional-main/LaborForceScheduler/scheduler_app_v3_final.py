@@ -280,6 +280,47 @@ def _set_runtime_metric(diag: Optional[Dict[str, Any]], key: str, seconds: float
     return out
 
 
+@dataclass
+class SolverRuntimeBudget:
+    phase: str
+    target_seconds: float
+    hard_seconds: float
+    started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
+    counters: Dict[str, int] = field(default_factory=dict)
+
+    def elapsed_seconds(self) -> float:
+        return max(0.0, (datetime.datetime.now() - self.started_at).total_seconds())
+
+    def seconds_remaining(self) -> float:
+        return max(0.0, float(self.hard_seconds) - self.elapsed_seconds())
+
+    def target_exhausted(self) -> bool:
+        return self.elapsed_seconds() >= float(self.target_seconds)
+
+    def hard_exhausted(self) -> bool:
+        return self.elapsed_seconds() >= float(self.hard_seconds)
+
+    def should_stop(self, reserve_seconds: float = 0.0) -> bool:
+        return self.seconds_remaining() <= max(0.0, float(reserve_seconds))
+
+    def note(self, key: str, amount: int = 1) -> int:
+        name = str(key)
+        self.counters[name] = int(self.counters.get(name, 0) or 0) + int(amount)
+        return self.counters[name]
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "phase": str(self.phase),
+            "target_seconds": round(float(self.target_seconds), 4),
+            "hard_seconds": round(float(self.hard_seconds), 4),
+            "elapsed_seconds": round(self.elapsed_seconds(), 4),
+            "seconds_remaining": round(self.seconds_remaining(), 4),
+            "target_exhausted": bool(self.target_exhausted()),
+            "hard_exhausted": bool(self.hard_exhausted()),
+            "counters": dict(self.counters),
+        }
+
+
 def _labor_cost_summary(model: DataModel, assignments: List[Assignment]) -> Dict[str, Any]:
     goals = getattr(model, "manager_goals", None)
     req, sched = _req_sched_counts(model, assignments)
@@ -4001,7 +4042,8 @@ def improve_weak_areas(model: DataModel,
                        protect_manual: bool = True,
                        max_passes: int = 2,
                        max_windows: int = 12,
-                       max_attempts_per_window: int = 20) -> Tuple[List[Assignment], Dict[str, Any]]:
+                       max_attempts_per_window: int = 20,
+                       runtime_budget: Optional[SolverRuntimeBudget] = None) -> Tuple[List[Assignment], Dict[str, Any]]:
     """Conservative post-generation targeted improvement pass.
 
     Focuses only on weak windows (coverage deficits first, fragile windows second)
@@ -4018,6 +4060,7 @@ def improve_weak_areas(model: DataModel,
         "protected_preserved": True,
         "notes": [],
     }
+    runtime_budget = runtime_budget or SolverRuntimeBudget("refine", 50.0, 60.0)
 
     if not base_assignments:
         diagnostics["notes"].append("No assignments provided; nothing to improve.")
@@ -4171,6 +4214,9 @@ def improve_weak_areas(model: DataModel,
     max_attempts_per_window = max(1, int(max_attempts_per_window))
 
     for p in range(max_passes):
+        if runtime_budget.should_stop(4.0):
+            diagnostics["notes"].append("Runtime budget exhausted before next refine pass.")
+            break
         diagnostics["passes_run"] = p + 1
         pass_improved = False
         cov_now = _coverage(current)
@@ -4192,6 +4238,9 @@ def improve_weak_areas(model: DataModel,
         clopen = _clopen_map_from_assignments(model, current)
 
         for (_sev_h, _peak, day, area, wst, wen, wkind) in weak_windows:
+            if runtime_budget.should_stop(4.0):
+                diagnostics["notes"].append("Runtime budget exhausted during weak-window refinement.")
+                break
             diagnostics["windows_examined"] += 1
             window_attempts = 0
             starts: List[int] = list(range(int(wst), int(wen)))
@@ -4216,6 +4265,7 @@ def improve_weak_areas(model: DataModel,
                             break
                         window_attempts += 1
                         diagnostics["attempts"] += 1
+                        runtime_budget.note("refine_candidate_evaluations", 1)
                         if _tick_max_blocked(cov_now, day, area, st, en):
                             diagnostics["rejected_moves"] += 1
                             continue
@@ -4228,12 +4278,25 @@ def improve_weak_areas(model: DataModel,
                         if not respects_daily_shift_limits(current, e, day, extra=(st, en)):
                             diagnostics["rejected_moves"] += 1
                             continue
+                        if not respects_max_consecutive_days(current, e, day):
+                            diagnostics["rejected_moves"] += 1
+                            continue
                         seg_h = hours_between_ticks(st, en)
                         if float(emp_hours.get(e.name, 0.0) or 0.0) + seg_h > float(getattr(e, "max_weekly_hours", 0.0) or 0.0) + 1e-9:
                             diagnostics["rejected_moves"] += 1
                             continue
+                        if not nd_minor_hours_feasible(model, e, day, st, en, current, label=label):
+                            diagnostics["rejected_moves"] += 1
+                            continue
                         trial = list(current)
                         trial.append(Assignment(day=day, area=area, start_t=st, end_t=en, employee_name=e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE))
+                        trial_errors = [
+                            v for v in evaluate_schedule_hard_rules(model, label, trial, include_override_warnings=False)
+                            if v.severity == "error" and is_engine_managed_source(v.assignment_source)
+                        ]
+                        if trial_errors:
+                            diagnostics["rejected_moves"] += 1
+                            continue
                         t_min, t_pref, t_max, t_short, t_score = _metrics(trial)
                         min_ok = (t_min <= cur_min)
                         score_ok = (t_score <= cur_score + 1e-9)
@@ -4273,6 +4336,7 @@ def improve_weak_areas(model: DataModel,
     diagnostics["after_max_violations"] = int(cur_max)
     diagnostics["after_short_shift_count"] = int(cur_short)
     diagnostics["after_score"] = float(cur_score)
+    diagnostics["runtime_budget"] = runtime_budget.snapshot()
     changed = list(current) != list(base_assignments)
     diagnostics["changed"] = bool(changed)
     if not diagnostics["changed"]:
@@ -4532,7 +4596,7 @@ def run_regression_harness(model: DataModel, label: str, assignments: Optional[L
             working = []
     try:
         protected = [a for a in working if bool(getattr(a, "locked", False)) or assignment_provenance(a) == ASSIGNMENT_SOURCE_MANUAL]
-        improved, diag = improve_weak_areas(model, label, working)
+        improved, diag = improve_weak_areas(model, label, working, runtime_budget=SolverRuntimeBudget("refine", 50.0, 60.0))
         prot_after = {(a.day, a.area, int(a.start_t), int(a.end_t), a.employee_name, bool(a.locked), str(a.source)) for a in improved}
         preserved = True
         for a in protected:
@@ -4569,14 +4633,25 @@ def _scenario_variants_for_model(model: DataModel) -> List[Dict[str, Any]]:
         {"name": "Stability Priority", "tweaks": {"w_schedule_stability": max(1.0, float(getattr(model.manager_goals, "w_schedule_stability", 14.0) or 12.0) * 1.5), "enable_schedule_stability": True}},
     ]
 
-def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map: Optional[Dict[Tuple[str,str,int], str]] = None) -> Tuple[List[Assignment], Dict[str,float], float, List[str], int, int, int, int, Dict[str, Any]]:
+def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map: Optional[Dict[Tuple[str,str,int], str]] = None, runtime_budget: Optional[SolverRuntimeBudget] = None) -> Tuple[List[Assignment], Dict[str,float], float, List[str], int, int, int, int, Dict[str, Any]]:
     scenario_specs = _scenario_variants_for_model(model)
     best = None
     scenario_rows: List[Dict[str, Any]] = []
     total_iters = 0
     total_restarts = 0
-    scenario_timings: List[Dict[str, Any]] = []
-    for spec in scenario_specs[:max(1, int(getattr(model.settings, "scenario_schedule_count", 4) or 4))]:
+    configured_count = max(1, int(getattr(model.settings, "scenario_schedule_count", 4) or 4))
+    scenario_limit = min(len(scenario_specs), configured_count, 3 if configured_count > 1 else 1)
+    pressure_stop_reason = ""
+    for idx, spec in enumerate(scenario_specs[:scenario_limit]):
+        if runtime_budget is not None:
+            if idx > 0 and (runtime_budget.target_exhausted() or runtime_budget.should_stop(3.0)):
+                pressure_stop_reason = "scenario_budget_pressure"
+                break
+            remaining_scenarios = max(0, scenario_limit - idx)
+            avg_allowance = runtime_budget.seconds_remaining() / float(max(1, remaining_scenarios))
+            if idx > 0 and avg_allowance < 8.0:
+                pressure_stop_reason = "scenario_average_budget_too_low"
+                break
         scenario_started = datetime.datetime.now()
         scenario_model = copy.deepcopy(model)
         for key, value in (spec.get("tweaks") or {}).items():
@@ -4585,7 +4660,7 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
             except Exception:
                 pass
         try:
-            result = generate_schedule(scenario_model, label, prev_tick_map=prev_tick_map)
+            result = generate_schedule(scenario_model, label, prev_tick_map=prev_tick_map, runtime_budget=runtime_budget)
             assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = result
             # OP1: skip extra breakdown work for clearly dominated failing scenarios.
             scenario_failed = (not assigns) or any(('INFEASIBLE' in str(w)) for w in (warnings or []))
@@ -4620,6 +4695,8 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
                 "valid": bool(engine_hard == 0),
             }
             scenario_rows.append(row)
+            if runtime_budget is not None:
+                runtime_budget.note("scenarios_run", 1)
             compare_key = (int(engine_hard), int(infeasible_warn), float(row["penalty"]))
             if best is None or compare_key < best[0]:
                 best = (compare_key, (assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag))
@@ -4633,16 +4710,22 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
     diag["phase5_scenarios"] = scenario_rows
     diag["chosen_scenario"] = str(diag.get("scenario_name", "Balanced"))
     diag["scenario_count"] = len(scenario_rows)
+    diag["scenario_count_configured"] = int(configured_count)
+    diag["scenario_stop_reason"] = pressure_stop_reason or ("configured_limit" if len(scenario_rows) < configured_count else "")
+    if runtime_budget is not None:
+        diag["runtime_budget"] = runtime_budget.snapshot()
     return assigns, emp_hours, total_hours, warnings, filled, total_slots, int(total_iters or iters_done), int(total_restarts or restarts_done), diag
 
 def generate_schedule(model: DataModel, label: str,
-                      prev_tick_map: Optional[Dict[Tuple[str,str,int], str]] = None) -> Tuple[List[Assignment], Dict[str,float], float, List[str], int, int, int, int, Dict[str, Any]]:
+                      prev_tick_map: Optional[Dict[Tuple[str,str,int], str]] = None,
+                      runtime_budget: Optional[SolverRuntimeBudget] = None) -> Tuple[List[Assignment], Dict[str,float], float, List[str], int, int, int, int, Dict[str, Any]]:
     """Primary schedule generation path.
 
     Hard legality remains contract-driven: fast local feasibility checks are retained for performance,
     and final legality is always gated by shared hard-rule evaluation + repair.
     """
     warnings: List[str] = []
+    runtime_budget = runtime_budget or SolverRuntimeBudget("generate_fresh", 25.0, 30.0)
     assignments: List[Assignment] = []
     emp_hours: Dict[str,float] = {e.name: 0.0 for e in model.employees}
     # Patch P3-4: speed up employee lookup in the hot path (add_assignment)
@@ -4768,13 +4851,57 @@ def generate_schedule(model: DataModel, label: str,
         return emp_pen + max(0.0, seg_h - 2.0), store_pen, day_idx_pen
 
     phase_snapshots: Dict[str, Dict[str, Any]] = {}
+    best_valid_state: Dict[str, Any] = {
+        "assignments": list(assignments),
+        "coverage": {},
+        "emp_hours": dict(emp_hours),
+        "total_labor_hours": 0.0,
+        "filled": 0,
+        "total_slots": int(total_min_slots),
+        "warnings": list(warnings),
+        "tag": "initial",
+    }
+
+    def _deadline_hit(reserve_seconds: float = 0.0) -> bool:
+        return bool(runtime_budget and runtime_budget.should_stop(reserve_seconds))
+
+    def _capture_best_valid(tag: str):
+        try:
+            cov_now = count_coverage_per_tick(assignments)
+            min_short_now, _pref_short_now, _max_viol_now = compute_requirement_shortfalls(min_req, pref_req, max_req, cov_now)
+            engine_hard_now = len(_engine_hard_violations(assignments))
+            if engine_hard_now > 0:
+                return
+            filled_now = int(sum(min_req.values()) - int(min_short_now))
+            rank_now = (int(min_short_now), float(schedule_score(model, label, assignments, int(min_short_now), history_stats, prev_tick_map or {})))
+            rank_best = best_valid_state.get("rank")
+            if rank_best is None or rank_now < rank_best:
+                best_valid_state["rank"] = rank_now
+                best_valid_state["assignments"] = list(assignments)
+                best_valid_state["coverage"] = dict(cov_now)
+                best_valid_state["emp_hours"] = dict(emp_hours)
+                best_valid_state["total_labor_hours"] = float(total_labor_hours)
+                best_valid_state["filled"] = int(filled_now)
+                best_valid_state["total_slots"] = int(total_min_slots)
+                best_valid_state["warnings"] = list(warnings)
+                best_valid_state["tag"] = str(tag)
+        except Exception:
+            pass
 
     def _record_phase_snapshot(phase_name: str):
         hours_by_day = _daily_store_hours(assignments)
         total_h = max(1e-9, float(sum(hours_by_day.values())))
+        variance = 0.0
+        if hours_by_day:
+            vals = [float(hours_by_day.get(d, 0.0) or 0.0) for d in DAYS]
+            avg = sum(vals) / float(max(1, len(vals)))
+            variance = sum((v - avg) ** 2 for v in vals) / float(max(1, len(vals)))
+        early_hours = float(sum(hours_by_day.get(d, 0.0) or 0.0 for d in DAYS[:3]))
         phase_snapshots[phase_name] = {
             "hours_by_day": hours_by_day,
             "sunday_share": float(hours_by_day.get("Sun", 0.0) / total_h),
+            "early_week_share": float(early_hours / total_h),
+            "day_load_variance": float(variance),
             "per_employee_by_day": _daily_employee_hours(assignments),
             "min_shortfall_by_day_area": _min_shortfall_by_day_area(coverage),
         }
@@ -4857,6 +4984,7 @@ def generate_schedule(model: DataModel, label: str,
     for a in locked:
         if not add_assignment(a, locked_ok=True, cov=coverage):
             warnings.append(f"Locked fixed shift could not be assigned: {a.employee_name} {a.day} {a.area} {tick_to_hhmm(a.start_t)}-{tick_to_hhmm(a.end_t)}")
+    _capture_best_valid("seed_locked")
 
     # Phase 4 D6: pattern-learning precompute (soft)
     try:
@@ -5408,9 +5536,12 @@ def generate_schedule(model: DataModel, label: str,
                             enforce_weekly_cap: bool,
                             prefer_underutilized: bool = False,
                             max_keys: int = 8000) -> Dict[str, int]:
-        stats = {"attempts": 0, "adds": 0}
+        stats = {"attempts": 0, "adds": 0, "stopped_for_budget": False}
         progressed = True
         while progressed:
+            if _deadline_hit(5.0):
+                stats["stopped_for_budget"] = True
+                break
             progressed = False
             all_deficits: List[Tuple[float, str, str, int]] = []
             for (d, a, t), mn in min_req.items():
@@ -5422,6 +5553,9 @@ def generate_schedule(model: DataModel, label: str,
             all_deficits.sort(key=lambda x: (x[0], -DAYS.index(x[1]), -int(x[3])), reverse=True)
             picked = [(d, a, t) for _s, d, a, t in all_deficits if a == area][:max_keys]
             for (day, _area, t) in picked:
+                if _deadline_hit(5.0):
+                    stats["stopped_for_budget"] = True
+                    break
                 if coverage.get((day, area, t), 0) >= min_req.get((day, area, t), 0):
                     continue
                 st = int(t)
@@ -5450,6 +5584,7 @@ def generate_schedule(model: DataModel, label: str,
                                                       prefer_underutilized=prefer_underutilized):
                         progressed = True
                         stats["adds"] += 1
+                        _capture_best_valid(f"fill_{area.lower()}")
                         break
                 if progressed:
                     break
@@ -5528,6 +5663,10 @@ def generate_schedule(model: DataModel, label: str,
         ))
 
         for e in target_emps:
+            if _deadline_hit(4.0):
+                detail = hard_min_phase_details.get(e.name, {})
+                detail.setdefault("blockers", []).append("runtime_budget_exhausted")
+                break
             detail = hard_min_phase_details.get(e.name, {})
             requested = float(detail.get("requested_min", 0.0) or 0.0)
             current = float(emp_hours.get(e.name, 0.0) or 0.0)
@@ -5567,27 +5706,55 @@ def generate_schedule(model: DataModel, label: str,
 
             passes = 0
             while max(0.0, requested - float(emp_hours.get(e.name, 0.0) or 0.0)) > 1e-9 and passes < 8:
+                if _deadline_hit(4.0):
+                    detail.setdefault("blockers", []).append("runtime_budget_exhausted")
+                    break
                 passes += 1
                 placed = False
                 remaining = max(0.0, requested - float(emp_hours.get(e.name, 0.0) or 0.0))
                 ranked_candidates: List[Tuple[Tuple[float, float, float, float, float], Assignment, bool]] = []
-                for day in DAYS:
+                day_order = sorted(
+                    DAYS,
+                    key=lambda day_name: (
+                        float(sum(max(0, int(min_req.get((day_name, area_name, tick), 0) or 0) - int(coverage.get((day_name, area_name, tick), 0) or 0)) for area_name in preferred_areas for tick in range(DAY_TICKS))),
+                        -float(_daily_store_hours(assignments).get(day_name, 0.0) or 0.0),
+                        -float(_daily_employee_hours(assignments).get(e.name, {}).get(day_name, 0.0) or 0.0),
+                        DAYS.index(day_name),
+                    ),
+                    reverse=True,
+                )
+                for day in day_order[:4]:
                     for area in preferred_areas:
+                        if _deadline_hit(4.0):
+                            break
+                        demand_ticks = [tick for tick in range(DAY_TICKS) if int(min_req.get((day, area, tick), 0) or 0) > int(coverage.get((day, area, tick), 0) or 0)]
+                        if not demand_ticks:
+                            day_load_now = float(_daily_store_hours(assignments).get(day, 0.0) or 0.0)
+                            if day_load_now > 0.0:
+                                demand_ticks = sorted({max(0, seg[1]) for seg in emp_day_segments.get((e.name, day), []) if seg[1] < DAY_TICKS})
+                        if not demand_ticks:
+                            continue
                         for seg_h in practical_lengths:
                             if seg_h - remaining > max(min_shift_h, 1.0) + 1e-9:
                                 continue
                             seg_ticks = max(1, int(round(seg_h * TICKS_PER_HOUR)))
-                            earliest = 0
-                            latest = DAY_TICKS - seg_ticks
-                            if latest < earliest:
-                                continue
-                            for st in range(earliest, latest + 1):
+                            candidate_starts: Set[int] = set()
+                            for demand_tick in demand_ticks[:12]:
+                                candidate_starts.add(max(0, min(int(demand_tick), DAY_TICKS - seg_ticks)))
+                                candidate_starts.add(max(0, min(int(demand_tick) - seg_ticks + 1, DAY_TICKS - seg_ticks)))
+                            for seg_st, seg_en, _seg_area in emp_day_segments.get((e.name, day), []):
+                                candidate_starts.add(max(0, min(int(seg_st) - seg_ticks, DAY_TICKS - seg_ticks)))
+                                candidate_starts.add(max(0, min(int(seg_en), DAY_TICKS - seg_ticks)))
+                            for st in sorted(candidate_starts):
                                 detail["attempt_counters"]["considered"] = int(detail["attempt_counters"].get("considered", 0)) + 1
+                                runtime_budget.note("hard_min_candidate_evaluations", 1)
                                 en = int(st + seg_ticks)
                                 cand = Assignment(day, area, int(st), int(en), e.name, locked=False, source=ASSIGNMENT_SOURCE_ENGINE)
                                 if not feasible_segment(e, day, area, int(st), int(en)):
                                     continue
                                 min_delta, pref_delta = _candidate_demand_delta(day, area, int(st), int(en), coverage)
+                                if min_delta <= 0 and pref_delta <= 0:
+                                    continue
                                 emp_pen, store_pen, day_idx_pen = _candidate_distribution_penalty(e.name, day, float(seg_h))
                                 segs = emp_day_segments.get((e.name, day), [])
                                 contiguous_bonus = 0.0
@@ -5596,8 +5763,9 @@ def generate_schedule(model: DataModel, label: str,
                                     merged_with_new = _merge_touching_intervals([(int(ast), int(aen)) for (ast, aen, _aa) in segs] + [(int(st), int(en))])
                                     if len(merged_with_new) < (len(merged_existing) + 1):
                                         contiguous_bonus = 1.0
-                                rank = (float(min_delta), float(pref_delta), float(contiguous_bonus) - float(emp_pen), -float(store_pen), -float(day_idx_pen))
-                                ranked_candidates.append((rank, cand, bool(st == earliest)))
+                                later_alt = 1.0 if DAYS.index(day) >= 3 else 0.0
+                                rank = (float(min_delta), float(pref_delta), float(contiguous_bonus) + later_alt - float(emp_pen), -float(store_pen), -float(day_idx_pen))
+                                ranked_candidates.append((rank, cand, bool(st == min(candidate_starts) if candidate_starts else False)))
                 if ranked_candidates:
                     ranked_candidates.sort(key=lambda x: x[0], reverse=True)
                     chosen_rank, chosen_cand, was_earliest = ranked_candidates[0]
@@ -5630,6 +5798,7 @@ def generate_schedule(model: DataModel, label: str,
                         if chosen_cand.day == "Sun":
                             detail["sunday_adds"] = int(detail.get("sunday_adds", 0)) + 1
                         placed = True
+                        _capture_best_valid("hard_min_topup")
                     else:
                         trial = assignments + [chosen_cand]
                         hard_ok = True
@@ -5662,6 +5831,8 @@ def generate_schedule(model: DataModel, label: str,
                 stats["employees_unmet"] = int(stats.get("employees_unmet", 0)) + 1
             else:
                 stats["employees_met"] = int(stats.get("employees_met", 0)) + 1
+        stats["runtime_budget_hit"] = bool(_deadline_hit(4.0))
+        stats["candidate_evaluations"] = int(runtime_budget.counters.get("hard_min_candidate_evaluations", 0))
 
         return stats
 
@@ -6306,15 +6477,17 @@ def generate_schedule(model: DataModel, label: str,
     # Scrutiny level controls effort (restarts + iterations).
     scr = str(getattr(model.settings, "solver_scrutiny_level", "Balanced") or "Balanced")
     SCRUTINY = {
-        "Fast":     {"restarts": 1,  "iters": 200,  "time_limit_s": 0,  "stop_early": True},
-        "Balanced": {"restarts": 3,  "iters": 600,  "time_limit_s": 0,  "stop_early": True},
-        "Thorough": {"restarts": 6,  "iters": 1200, "time_limit_s": 0,  "stop_early": False},
-        "Maximum":  {"restarts": 10, "iters": 2000, "time_limit_s": 0,  "stop_early": False},
+        "Fast":     {"restarts": 1, "iters": 120, "time_limit_s": 0, "stop_early": True},
+        "Balanced": {"restarts": 2, "iters": 280, "time_limit_s": 0, "stop_early": True},
+        "Thorough": {"restarts": 3, "iters": 520, "time_limit_s": 0, "stop_early": True},
+        "Maximum":  {"restarts": 4, "iters": 760, "time_limit_s": 0, "stop_early": True},
     }
     preset = SCRUTINY.get(scr, SCRUTINY["Balanced"])
     restarts_target = int(preset["restarts"])
     iters_per_restart = int(preset["iters"])
-    time_limit_s = int(preset.get("time_limit_s", 0) or 0)
+    time_limit_s = float(preset.get("time_limit_s", 0) or 0)
+    if runtime_budget is not None:
+        time_limit_s = min(time_limit_s or max(0.0, runtime_budget.seconds_remaining() - 4.0), max(0.0, runtime_budget.seconds_remaining() - 4.0))
     stop_early = bool(preset.get("stop_early", True))
 
     temp = float(model.settings.optimizer_temperature)
@@ -6513,6 +6686,8 @@ def generate_schedule(model: DataModel, label: str,
     # Multi-start local search (random restarts)
     restart_no_global_improve = 0
     for r in range(max(1, restarts_target)):
+        if _deadline_hit(3.0):
+            break
         restarts_done += 1
         best_before_restart = float(best[0])
         # Diversify start by doing a few random steps from the base schedule.
@@ -6527,9 +6702,10 @@ def generate_schedule(model: DataModel, label: str,
         best_no_improve = 0
         for k in range(iters_per_restart):
             total_iters_done += 1
-            if time_limit_s:
-                if (datetime.datetime.now() - t0).total_seconds() >= time_limit_s:
-                    break
+            if time_limit_s and (datetime.datetime.now() - t0).total_seconds() >= time_limit_s:
+                break
+            if _deadline_hit(3.0):
+                break
             nxt = step(cur, _quality_key(cur))
             unfilled = compute_unfilled(nxt)
             sc = score_assignments(nxt, unfilled)
@@ -6538,6 +6714,8 @@ def generate_schedule(model: DataModel, label: str,
                 best_no_improve = 0
                 if sc < best[0]:
                     best = (sc, nxt)
+                    assignments = list(best[1])
+                    _capture_best_valid("local_search")
             else:
                 best_no_improve += 1
                 # accept with probability
@@ -6554,6 +6732,8 @@ def generate_schedule(model: DataModel, label: str,
 
         if time_limit_s and (datetime.datetime.now() - t0).total_seconds() >= time_limit_s:
             break
+        if _deadline_hit(3.0):
+            break
         if stop_early and best[0] <= 0:
             break
         nxt = step(cur, _quality_key(cur))
@@ -6563,6 +6743,8 @@ def generate_schedule(model: DataModel, label: str,
             cur, cur_score = nxt, sc
             if sc < best[0]:
                 best = (sc, nxt)
+                assignments = list(best[1])
+                _capture_best_valid("local_search_tail")
         else:
             # accept with probability
             if temp > 0:
@@ -6984,6 +7166,8 @@ def generate_schedule(model: DataModel, label: str,
                 break
 
         return working, stats
+    _capture_best_valid("pre_final_validation")
+
     # Final shared hard-rule validation gate before return.
     final_structured_violations = evaluate_schedule_hard_rules(model, label, assignments, include_override_warnings=True)
     repair_stats: Dict[str, Any] = {}
@@ -7013,10 +7197,26 @@ def generate_schedule(model: DataModel, label: str,
     override_cap_conflicts = [v for v in override_only if v.code in {"maximum-weekly-labor-cap", "max-staffing-soft-ceiling", "employee-max-weekly-hours"}]
     if engine_hard:
         warnings.append(f"INFEASIBLE: scenario invalid after final hard validation ({len(engine_hard)} engine hard violations remain).")
+        fallback_assigns = list(best_valid_state.get("assignments") or [])
+        if fallback_assigns:
+            fallback_engine_hard = _engine_hard_violations(fallback_assigns)
+            if not fallback_engine_hard:
+                assignments = fallback_assigns
+                emp_hours = dict(best_valid_state.get("emp_hours") or {})
+                total_hours = float(sum(emp_hours.values()))
+                coverage = dict(best_valid_state.get("coverage") or count_coverage_per_tick(assignments))
+                final_structured_violations = evaluate_schedule_hard_rules(model, label, assignments, include_override_warnings=True)
+                engine_hard = [v for v in final_structured_violations if (not v.is_override_allowed and v.severity == "error" and is_engine_managed_source(v.assignment_source))]
+                warnings.append(f"Runtime fallback returned best valid schedule captured during {best_valid_state.get('tag', 'solver_run')}.")
     if override_only:
         warnings.append(f"Override diagnostics: {len(override_only)} override assignment rule warning(s) retained by manager authority.")
     for v in final_structured_violations:
         warnings.append(f"FINAL HARD VALIDATION: {_viol_to_text(v)}")
+    coverage = count_coverage_per_tick(assignments)
+    min_short2, pref_short2, max_viol2 = compute_requirement_shortfalls(min_req, pref_req, max_req, coverage)
+    filled = int(sum(min_req.values()) - min_short2)
+    total = int(sum(min_req.values()))
+    total_hours = float(sum(emp_hours.values()))
     if 'phase_diagnostics' in locals():
         phase_diagnostics["phase7_final_legality"] = {
             "final_total_violations": int(len(final_structured_violations)),
@@ -7208,6 +7408,12 @@ def generate_schedule(model: DataModel, label: str,
     "phase_diagnostics": dict(phase_diagnostics) if 'phase_diagnostics' in locals() else {},
     "phase_snapshots": dict(phase_snapshots),
     "candidate_selection_telemetry": list(solver_selection_telemetry[-400:]),
+    "week_shape_diagnostics": {
+        "hours_by_day": dict(_daily_store_hours(assignments)),
+        "day_load_variance": float(phase_snapshots.get("phase5_cstore_backfill_after_carwash", {}).get("day_load_variance", 0.0) or 0.0),
+        "early_week_share": float(phase_snapshots.get("phase5_cstore_backfill_after_carwash", {}).get("early_week_share", 0.0) or 0.0),
+        "best_valid_capture_tag": str(best_valid_state.get("tag", "")),
+    },
     "add_outcome_counts": dict(add_outcome_counts),
     "requirement_map_fingerprints": {
         "ui_base": dict(req_fp),
@@ -7231,6 +7437,14 @@ def generate_schedule(model: DataModel, label: str,
 
     "limiting_factors": list(limiting),
     "limiting_factors_structured": list(limiting_structured),
+    "runtime_budget": runtime_budget.snapshot(),
+    "local_search_actuals": {
+        "scrutiny": str(scr),
+        "iterations_used": int(total_iters_done),
+        "restarts_used": int(restarts_done),
+        "iterations_target_per_restart": int(iters_per_restart),
+        "restarts_target": int(restarts_target),
+    },
 }
 
     return assignments, emp_hours, total_hours, warnings, filled, total, int(total_iters_done), int(restarts_done), diagnostics
@@ -12274,7 +12488,7 @@ class SchedulerApp(tk.Tk):
 
         working = list(baseline)
         for _pass in range(2):
-            improved, diag = improve_weak_areas(self.model, label, working)
+            improved, diag = improve_weak_areas(self.model, label, working, runtime_budget=SolverRuntimeBudget("refine", 50.0, 60.0))
             if protected:
                 improved, _removed = self._overlay_preserved_assignments(improved, protected)
             ms, ps = _min_pref_short(improved)
@@ -12652,10 +12866,11 @@ class SchedulerApp(tk.Tk):
             if not _suppress_progress:
                 self._set_engine_status("Running solver...", busy=True, pct=55)
             solver_started = datetime.datetime.now()
+            runtime_budget = SolverRuntimeBudget("generate_fresh", 25.0, 30.0)
             if bool(getattr(self.model.settings, "enable_multi_scenario_generation", True)):
-                assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule_multi_scenario(model_for_generation, label, prev_tick_map=prev_tick_map)
+                assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule_multi_scenario(model_for_generation, label, prev_tick_map=prev_tick_map, runtime_budget=runtime_budget)
             else:
-                assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule(model_for_generation, label, prev_tick_map=prev_tick_map)
+                assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule(model_for_generation, label, prev_tick_map=prev_tick_map, runtime_budget=runtime_budget)
             solver_seconds = (datetime.datetime.now() - solver_started).total_seconds()
             try:
                 diag = dict(diag or {})

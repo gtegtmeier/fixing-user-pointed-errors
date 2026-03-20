@@ -90,6 +90,92 @@ class SolverBiasRegressionTests(unittest.TestCase):
         self.assertIn("chosen_rank", sample)
         self.assertIn("feasible_candidates", sample)
 
+    def test_runtime_budget_best_so_far_exit_returns_valid_schedule(self):
+        model = mod.DataModel()
+        model.employees = [_employee("A", ["CSTORE"]), _employee("B", ["CSTORE"]), _employee("C", ["CSTORE"])]
+        model.requirements = _requirements_balanced("CSTORE", 1)
+        budget = mod.SolverRuntimeBudget("generate_fresh", 0.0, 0.0)
+        assigns, _emp_hours, _total_hours, _warnings, _filled, _total_slots, _iters, _restarts, diag = mod.generate_schedule(model, "", runtime_budget=budget)
+        self.assertIsInstance(assigns, list)
+        self.assertTrue(diag.get("final_schedule_valid", False))
+        self.assertTrue(diag.get("runtime_budget", {}).get("hard_exhausted", False))
+
+    def test_week_shape_diagnostics_include_balance_fields(self):
+        model = mod.DataModel()
+        model.employees = [_employee("A", ["CSTORE"]), _employee("B", ["CSTORE"]), _employee("C", ["CSTORE"])]
+        model.requirements = _requirements_balanced("CSTORE", 1)
+        diag = mod.generate_schedule(model, "")[-1]
+        week_shape = diag.get("week_shape_diagnostics", {})
+        self.assertIn("hours_by_day", week_shape)
+        self.assertIn("day_load_variance", week_shape)
+        self.assertIn("early_week_share", week_shape)
+
+    def test_refine_runtime_budget_diagnostics(self):
+        model = mod.DataModel()
+        model.employees = [_employee("A", ["CSTORE"]), _employee("B", ["CSTORE"])]
+        model.requirements = [mod.RequirementBlock("Mon", "CSTORE", 16, 24, 1, 1, 2)]
+        refined, diag = mod.improve_weak_areas(model, "Week", [], runtime_budget=mod.SolverRuntimeBudget("refine", 0.0, 0.0))
+        self.assertEqual(refined, [])
+        self.assertIn("notes", diag)
+
+    def test_refine_does_not_introduce_engine_hard_errors(self):
+        model = mod.DataModel()
+        model.employees = [
+            _employee("A", ["CSTORE", "KITCHEN"], max_weekly=32.0),
+            _employee("B", ["CSTORE", "CARWASH"], max_weekly=30.0),
+            _employee("C", ["CSTORE"], max_weekly=28.0),
+            _employee("D", ["CSTORE", "KITCHEN", "CARWASH"], max_weekly=36.0),
+            _employee("E", ["KITCHEN", "CSTORE"], max_weekly=24.0, hard_min=8.0),
+            _employee("F", ["CARWASH", "CSTORE"], max_weekly=24.0),
+        ]
+        req = []
+        for d in mod.DAYS:
+            req += [
+                mod.RequirementBlock(d, "CSTORE", 16, 32, 1, 1, 2),
+                mod.RequirementBlock(d, "KITCHEN", 18, 28, 1, 1, 2),
+                mod.RequirementBlock(d, "CARWASH", 20, 26, 1, 1, 2),
+            ]
+        model.requirements = req
+        baseline, *_rest, diag = mod.generate_schedule_multi_scenario(model, "Week")
+        self.assertTrue(diag.get("final_schedule_valid", False))
+        working = list(baseline)
+        for target in [("Mon", "CSTORE"), ("Thu", "KITCHEN"), ("Sat", "CARWASH")]:
+            for a in list(working):
+                if a.day == target[0] and a.area == target[1] and a.source == mod.ASSIGNMENT_SOURCE_ENGINE:
+                    working.remove(a)
+                    break
+
+        def _find_valid_manual():
+            for e in model.employees:
+                for day in mod.DAYS:
+                    for st in range(0, mod.DAY_TICKS - 2, 2):
+                        cand = mod.Assignment(day, "CSTORE", st, st + 2, e.name, False, mod.ASSIGNMENT_SOURCE_MANUAL)
+                        trial = list(working) + [cand]
+                        errs = [
+                            v for v in mod.evaluate_schedule_hard_rules(model, "Week", trial, include_override_warnings=False)
+                            if v.severity == "error" and mod.is_engine_managed_source(v.assignment_source)
+                        ]
+                        if not errs:
+                            return cand
+            return None
+
+        manual = _find_valid_manual()
+        self.assertIsNotNone(manual)
+        working.append(manual)
+        input_errors = [
+            v for v in mod.evaluate_schedule_hard_rules(model, "Week", working, include_override_warnings=False)
+            if v.severity == "error" and mod.is_engine_managed_source(v.assignment_source)
+        ]
+        self.assertEqual(input_errors, [])
+        refined, ref_diag = mod.improve_weak_areas(model, "Week", working, protect_manual=True, runtime_budget=mod.SolverRuntimeBudget("refine", 50.0, 60.0))
+        output_errors = [
+            v for v in mod.evaluate_schedule_hard_rules(model, "Week", refined, include_override_warnings=False)
+            if v.severity == "error" and mod.is_engine_managed_source(v.assignment_source)
+        ]
+        self.assertEqual(output_errors, [])
+        self.assertIn(manual, refined)
+        self.assertTrue(ref_diag.get("protected_preserved", False))
+
     def test_requirement_parity_intact(self):
         model = mod.DataModel()
         model.employees = [_employee("A", ["CSTORE"])]
