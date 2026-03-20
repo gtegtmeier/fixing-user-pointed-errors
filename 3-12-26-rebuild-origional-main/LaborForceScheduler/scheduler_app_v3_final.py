@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 # LaborForceScheduler V3 (NEW) — Portable, 30-minute ticks, Optimizer
 # -------------------------------------------------------------------
@@ -236,6 +237,192 @@ def ensure_runtime_support_dirs() -> None:
         except Exception:
             pass
 
+
+def resolve_brand_asset_paths(base_dir: Optional[str] = None) -> Dict[str, List[str]]:
+    root = base_dir or os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(root, "Assets")
+    legacy_assets_dir = os.path.join(root, "assets")
+    header = [
+        os.path.join(assets_dir, "header_logo.png"),
+        os.path.join(legacy_assets_dir, "header_logo.png"),
+        os.path.join(legacy_assets_dir, "petroserve.png"),
+        os.path.join(root, "petroserve.png"),
+    ]
+    store = [
+        os.path.join(assets_dir, "store_logo.png"),
+        os.path.join(legacy_assets_dir, "store_logo.png"),
+        os.path.join(assets_dir, "header_logo.png"),
+        os.path.join(legacy_assets_dir, "header_logo.png"),
+        os.path.join(legacy_assets_dir, "petroserve.png"),
+        os.path.join(root, "petroserve.png"),
+    ]
+    return {"header": header, "store": store}
+
+
+def resolve_brand_asset_path(kind: str = "header", base_dir: Optional[str] = None) -> str:
+    candidates = resolve_brand_asset_paths(base_dir).get(str(kind or "header"), [])
+    return next((p for p in candidates if os.path.isfile(p)), "")
+
+
+def _build_runtime_diagnostics_bucket(diag: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    out = dict(diag or {})
+    runtime = dict(out.get("runtime_diagnostics") or {})
+    out["runtime_diagnostics"] = runtime
+    return out
+
+
+def _set_runtime_metric(diag: Optional[Dict[str, Any]], key: str, seconds: float, **extra: Any) -> Dict[str, Any]:
+    out = _build_runtime_diagnostics_bucket(diag)
+    row = {"seconds": round(max(0.0, float(seconds or 0.0)), 4)}
+    for ek, ev in extra.items():
+        row[str(ek)] = ev
+    out["runtime_diagnostics"][str(key)] = row
+    return out
+
+
+def _labor_cost_summary(model: DataModel, assignments: List[Assignment]) -> Dict[str, Any]:
+    goals = getattr(model, "manager_goals", None)
+    req, sched = _req_sched_counts(model, assignments)
+    total_hours = float(sum(hours_between_ticks(a.start_t, a.end_t) for a in assignments))
+    hours_by_area = {area: 0.0 for area in AREAS}
+    daily_totals = {day: 0.0 for day in DAYS}
+    for a in assignments:
+        hrs = float(hours_between_ticks(a.start_t, a.end_t))
+        hours_by_area[a.area] = hours_by_area.get(a.area, 0.0) + hrs
+        daily_totals[a.day] = daily_totals.get(a.day, 0.0) + hrs
+    overstaff_hours = 0.0
+    near_cap_ticks = 0
+    for key, sched_ct in sched.items():
+        req_ct = int(req.get(key, 0) or 0)
+        if int(sched_ct) > req_ct:
+            overstaff_hours += (int(sched_ct) - req_ct) * 0.5
+    hard_cap = float(getattr(goals, 'maximum_weekly_cap', 0.0) or 0.0)
+    cap_ratio = (total_hours / hard_cap) if hard_cap > 0.0 else 0.0
+    for day in DAYS:
+        for area in AREAS:
+            for t in range(DAY_TICKS):
+                req_ct = int(req.get((day, area, t), 0) or 0)
+                sched_ct = int(sched.get((day, area, t), 0) or 0)
+                if req_ct > 0 and sched_ct >= req_ct and sched_ct <= req_ct + 1:
+                    near_cap_ticks += 1
+    return {
+        "total_hours": total_hours,
+        "hours_by_area": hours_by_area,
+        "daily_totals": daily_totals,
+        "weekly_cap_hours": hard_cap,
+        "weekly_cap_ratio": cap_ratio,
+        "overstaff_hours": overstaff_hours,
+        "near_cap_indicator_ticks": int(near_cap_ticks),
+        "approx_labor_load": "High" if cap_ratio >= 0.95 else ("Moderate" if cap_ratio >= 0.75 else "Low"),
+    }
+
+
+def build_publish_readiness_checklist(model: DataModel, label: str, assignments: List[Assignment], diagnostics: Optional[Dict[str, Any]] = None, warnings: Optional[List[str]] = None, analyzer_findings_count: Optional[int] = None) -> Dict[str, Any]:
+    diag = dict(diagnostics or {})
+    findings = requirement_sanity_checker(model, label, assignments).get("warnings", [])
+    readiness = build_manager_readiness_summary(model, label, assignments, diagnostics=diag, warnings=warnings)
+    actual_analyzer_count = int(analyzer_findings_count) if analyzer_findings_count is not None else int(len(findings))
+    fragile_count = 0
+    try:
+        cov = count_coverage_per_tick(assignments)
+        min_req, _pref_req, _max_req = build_requirement_maps(model.requirements, goals=getattr(model, "manager_goals", None), store_info=getattr(model, "store_info", None))
+        fragile_count = sum(1 for key, req in min_req.items() if int(req or 0) > 0 and int(cov.get(key, 0) or 0) == int(req or 0))
+    except Exception:
+        fragile_count = 0
+    return {
+        "status": readiness.get("status", "Review"),
+        "publish_ready": bool(readiness.get("publish_ready", False)),
+        "readiness": readiness,
+        "hard_blockers": [line for line in readiness.get("headline", []) if "uncovered" in line.lower() or "hard-rule" in line.lower()],
+        "uncovered_minimums": int(readiness.get("min_short", 0) or 0),
+        "preferred_gaps": int(readiness.get("pref_short", 0) or 0),
+        "fragile_windows_count": int(fragile_count),
+        "override_warnings": int(readiness.get("override_warnings", 0) or 0),
+        "labor_cap_warnings": int(diag.get("cap_blocked_attempts", 0) or 0),
+        "analyzer_findings_count": int(actual_analyzer_count),
+        "analyzer_findings": list(findings),
+    }
+
+
+def build_historical_suggestions(model: DataModel) -> Dict[str, Any]:
+    pats = getattr(model, "learned_patterns", {}) or {}
+    suggestions: List[Dict[str, Any]] = []
+    demand = dict((pats.get("__demand_forecast__") or {})) if isinstance(pats, dict) else {}
+    for emp in getattr(model, "employees", []) or []:
+        prof = dict((pats.get(emp.name) or {})) if isinstance(pats, dict) else {}
+        if not prof:
+            continue
+        bits: List[str] = []
+        if prof.get("preferred_area"):
+            bits.append(f"Usually strongest in {prof.get('preferred_area')}")
+        if prof.get("preferred_start_tick") is not None:
+            bits.append(f"Typical start {tick_to_hhmm(int(prof.get('preferred_start_tick') or 0))}")
+        if prof.get("preferred_len_ticks"):
+            bits.append(f"Common block length {hours_between_ticks(0, int(prof.get('preferred_len_ticks') or 0)):.1f}h")
+        suggestions.append({"employee": emp.name, "summary": "; ".join(bits), "confidence": float(len(bits))})
+    suggestions.sort(key=lambda row: (row.get("confidence", 0.0), str(row.get("employee", "")).lower()), reverse=True)
+    top_pressure = []
+    for key, val in list(demand.items())[:6]:
+        try:
+            day, area, tick = key.split("|")
+            top_pressure.append({"day": day, "area": area, "tick": int(tick), "forecast": float(val)})
+        except Exception:
+            continue
+    return {"employee_suggestions": suggestions[:8], "forecast_pressure": top_pressure[:6]}
+
+
+def build_replacement_assistant_candidates(model: DataModel, label: str, assignments: List[Assignment], target: Assignment) -> Dict[str, Any]:
+    cov = count_coverage_per_tick(assignments)
+    emp_hours: Dict[str, float] = {}
+    for a in assignments:
+        emp_hours[a.employee_name] = emp_hours.get(a.employee_name, 0.0) + hours_between_ticks(a.start_t, a.end_t)
+    base_without = [a for a in assignments if a is not target]
+    clopen = _clopen_map_from_assignments(model, base_without)
+    min_req, _pref_req, _max_req = build_requirement_maps(model.requirements, goals=getattr(model, 'manager_goals', None), store_info=getattr(model, 'store_info', None))
+    candidates = []
+    swaps = []
+    target_hours = float(hours_between_ticks(target.start_t, target.end_t))
+    for e in getattr(model, 'employees', []) or []:
+        if getattr(e, 'work_status', '') != 'Active' or e.name == target.employee_name:
+            continue
+        qualified = target.area in (getattr(e, 'areas_allowed', []) or [])
+        available = bool(qualified and is_employee_available(model, e, label, target.day, target.start_t, target.end_t, target.area, clopen))
+        overlap_safe = not any(a.employee_name == e.name and a.day == target.day and not (int(a.end_t) <= int(target.start_t) or int(a.start_t) >= int(target.end_t)) for a in base_without)
+        projected = float(emp_hours.get(e.name, 0.0) or 0.0) + target_hours
+        limit_safe = projected <= float(getattr(e, 'max_weekly_hours', 0.0) or 0.0) + 1e-9
+        impact_ticks = 0
+        for tt in range(int(target.start_t), int(target.end_t)):
+            key = (target.day, target.area, int(tt))
+            before = int(cov.get(key, 0) or 0) - 1
+            after = before + (1 if available and overlap_safe else 0)
+            impact_ticks += max(0, int(min_req.get(key, 0) or 0) - after)
+        explanation = []
+        explanation.append("qualified" if qualified else "not qualified")
+        explanation.append("available" if available else "availability warning")
+        explanation.append("overlap-safe" if overlap_safe else "overlap conflict")
+        explanation.append("hour-limit-safe" if limit_safe else "hour-limit warning")
+        candidates.append({
+            "employee": e.name,
+            "qualified": bool(qualified),
+            "available": bool(available),
+            "overlap_safe": bool(overlap_safe),
+            "hour_limit_safe": bool(limit_safe),
+            "coverage_impact_ticks": int(impact_ticks),
+            "explanation": ", ".join(explanation),
+            "score": (1 if qualified else 0) + (1 if available else 0) + (1 if overlap_safe else 0) + (1 if limit_safe else 0) - impact_ticks * 0.1,
+        })
+    candidates.sort(key=lambda row: (row["score"], -row["coverage_impact_ticks"], str(row["employee"]).lower()), reverse=True)
+    for other in base_without:
+        if other.day != target.day or other.employee_name == target.employee_name:
+            continue
+        if other.area not in getattr(next((e for e in model.employees if e.name == target.employee_name), Employee(name="")), 'areas_allowed', []):
+            continue
+        if target.area not in getattr(next((e for e in model.employees if e.name == other.employee_name), Employee(name="")), 'areas_allowed', []):
+            continue
+        swaps.append({"swap_with": other.employee_name, "day": other.day, "target_area": target.area, "other_area": other.area})
+        if len(swaps) >= 3:
+            break
+    return {"target_employee": target.employee_name, "candidates": candidates[:6], "swap_suggestions": swaps[:3]}
 
 def _candidate_starter_data_paths() -> List[str]:
     """Return supported starter-data locations (new + legacy casing)."""
@@ -3944,7 +4131,21 @@ def improve_weak_areas(model: DataModel,
 
     active_emps = [e for e in model.employees if getattr(e, "work_status", "Active") == "Active"]
 
-    def _candidate_rank(e: Employee, day: str, area: str, st: int, en: int, emp_hours: Dict[str, float]) -> Tuple[float, float, str]:
+    emp_flex = {e.name: max(1, len(getattr(e, "areas_allowed", []) or [])) for e in active_emps}
+    later_pressure: Dict[Tuple[str, str, int, int], float] = {}
+
+    def _contiguous_extension_bonus(assigns: List[Assignment], emp_name: str, day: str, st: int, en: int) -> float:
+        segs = [(int(a.start_t), int(a.end_t)) for a in assigns if a.employee_name == emp_name and a.day == day]
+        if not segs:
+            return -0.35
+        merged_existing = _merge_touching_intervals(segs)
+        merged_new = _merge_touching_intervals(segs + [(int(st), int(en))])
+        if len(merged_new) < len(merged_existing) + 1:
+            return 1.25
+        seg_h = hours_between_ticks(st, en)
+        return -0.8 if seg_h <= 2.0 + 1e-9 else -0.25
+
+    def _candidate_rank(e: Employee, day: str, area: str, st: int, en: int, emp_hours: Dict[str, float]) -> Tuple[float, float, float, float, str]:
         cur_h = float(emp_hours.get(e.name, 0.0) or 0.0)
         gap = max(0.0, float(getattr(e, "target_min_hours", 0.0) or 0.0) - cur_h)
         stab_match = 0.0
@@ -3955,7 +4156,7 @@ def improve_weak_areas(model: DataModel,
                 if prev_tick_map.get((day, area, int(tt))) == e.name:
                     match += 1
             stab_match = match / float(total)
-        return (stab_match, gap, f"{100000-cur_h:09.3f}:{e.name.lower()}")
+        return (stab_match, _contiguous_extension_bonus(current, e.name, day, st, en), -1.0 / float(emp_flex.get(e.name, 1)), gap + later_pressure.get((day, area, st, min(DAY_TICKS, st + 2)), 0.0) * 0.05, f"{100000-cur_h:09.3f}:{e.name.lower()}")
 
     current = list(base_assignments)
     cur_min, cur_pref, cur_max, cur_short, cur_score = _metrics(current)
@@ -3973,6 +4174,15 @@ def improve_weak_areas(model: DataModel,
         diagnostics["passes_run"] = p + 1
         pass_improved = False
         cov_now = _coverage(current)
+        later_pressure = {}
+        for day_lp in DAYS:
+            for area_lp in AREAS:
+                for st_lp in range(DAY_TICKS):
+                    later = 0.0
+                    horizon = min(DAY_TICKS, st_lp + 8)
+                    for tt in range(st_lp, horizon):
+                        later += max(0, int(min_req.get((day_lp, area_lp, tt), 0) or 0) - int(cov_now.get((day_lp, area_lp, tt), 0) or 0))
+                    later_pressure[(day_lp, area_lp, st_lp, min(DAY_TICKS, st_lp + 2))] = later
         weak_windows = _extract_weak_windows(cov_now)[:total_window_budget]
         if not weak_windows:
             diagnostics["notes"].append("No weak windows detected.")
@@ -3988,7 +4198,7 @@ def improve_weak_areas(model: DataModel,
             if int(wst) > 0:
                 starts.append(int(wst) - 1)
             starts = sorted(set([t for t in starts if 0 <= t < DAY_TICKS]))
-            segment_lengths = [8, 6, 4, 2] if wkind != "fragile" else [6, 4, 2]
+            segment_lengths = [6, 4, 2] if wkind == "fragile" else [8, 6, 4, 2]
             accepted_here = False
             for st in starts:
                 if accepted_here or window_attempts >= max_attempts_per_window:
@@ -4029,7 +4239,8 @@ def improve_weak_areas(model: DataModel,
                         score_ok = (t_score <= cur_score + 1e-9)
                         max_ok = (t_max <= cur_max)
                         short_ok = (t_short <= cur_short)
-                        strict_better = (t_min < cur_min) or (t_short < cur_short) or (t_score < cur_score - 1e-9)
+                        extend_bias = _contiguous_extension_bonus(current, e.name, day, st, en)
+                        strict_better = (t_min < cur_min) or (t_short < cur_short) or (t_score < cur_score - 1e-9) or (extend_bias > 0.9 and t_min == cur_min and t_short <= cur_short)
                         if min_ok and score_ok and max_ok and short_ok and strict_better:
                             current = trial
                             cur_min, cur_pref, cur_max, cur_short, cur_score = t_min, t_pref, t_max, t_short, t_score
@@ -4364,7 +4575,9 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
     scenario_rows: List[Dict[str, Any]] = []
     total_iters = 0
     total_restarts = 0
+    scenario_timings: List[Dict[str, Any]] = []
     for spec in scenario_specs[:max(1, int(getattr(model.settings, "scenario_schedule_count", 4) or 4))]:
+        scenario_started = datetime.datetime.now()
         scenario_model = copy.deepcopy(model)
         for key, value in (spec.get("tweaks") or {}).items():
             try:
@@ -4396,6 +4609,7 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
             infeasible_warn = int(sum(1 for w in (warnings or []) if "INFEASIBLE" in str(w)))
             row = {
                 "name": spec.get("name", "Scenario"),
+                "seconds": round((datetime.datetime.now() - scenario_started).total_seconds(), 4),
                 "penalty": float(score_pen),
                 "hours": float(total_hours),
                 "warnings": int(len(warnings or [])),
@@ -4410,7 +4624,7 @@ def generate_schedule_multi_scenario(model: DataModel, label: str, prev_tick_map
             if best is None or compare_key < best[0]:
                 best = (compare_key, (assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag))
         except Exception as ex:
-            scenario_rows.append({"name": spec.get("name", "Scenario"), "penalty": 1e9, "hours": 0.0, "warnings": 1, "filled": 0, "total_slots": 0, "error": str(ex)})
+            scenario_rows.append({"name": spec.get("name", "Scenario"), "penalty": 1e9, "hours": 0.0, "warnings": 1, "filled": 0, "total_slots": 0, "error": str(ex), "seconds": round((datetime.datetime.now() - scenario_started).total_seconds(), 4)})
     if best is None:
         raise RuntimeError("Multi-scenario generation failed for all scenarios.")
     assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = best[1]
@@ -4672,6 +4886,8 @@ def generate_schedule(model: DataModel, label: str,
         for p in prefer_fixed
     )
     current_avg_active_wants = 0.0
+    scarce_employee_signal: Dict[str, float] = {}
+    later_demand_pressure: Dict[Tuple[str, str, int, int], float] = {}
 
     # Candidate preference score for segment placement
     def candidate_score(e: Employee, day: str, area: str, st: int, en: int) -> float:
@@ -4787,10 +5003,13 @@ def generate_schedule(model: DataModel, label: str,
                         score += (w_extend * 3.0)
 
                     # Discourage isolated micro fragments.
+                    min_delta_local, pref_delta_local = _candidate_demand_delta(day, area, st, en, coverage)
                     if seg_h <= 1.0 + 1e-9:
-                        score -= 34.0
+                        score -= (40.0 if min_delta_local <= 0 else 34.0)
                     elif seg_h <= 2.0 + 1e-9:
-                        score -= 16.0
+                        score -= (20.0 if min_delta_local <= 0 else 16.0)
+                    if created_new_block and min_delta_local <= 0:
+                        score -= 12.0
 
                     # Prefer moves that help an existing block approach practical length.
                     best_delta = None
@@ -4815,6 +5034,15 @@ def generate_schedule(model: DataModel, label: str,
                 _log_once('util_segment_scoring', f"[solver] utilization(segment) scoring failed: {ex}")
 
         # Phase 3: coverage risk protection (soft)
+        scarce_signal = float(scarce_employee_signal.get(e.name, 0.0) or 0.0)
+        if scarce_signal > 0.0:
+            score += scarce_signal * 0.6
+        try:
+            pressure = float(later_demand_pressure.get((day, area, int(st), min(DAY_TICKS, int(st) + 2)), 0.0) or 0.0)
+            score += max(0.0, pressure) * 0.03
+        except Exception:
+            pass
+
         if enable_risk and w_risk > 0.0 and tick_scarcity:
             try:
                 # Average scarcity-based risk across ticks in this segment
@@ -5030,6 +5258,16 @@ def generate_schedule(model: DataModel, label: str,
     except Exception:
         specialty_peak_windows = []
 
+    scarce_employee_signal = {name: (1.0 / max(1.0, float(emp_feasible_totals.get(name, 0) or 0.0))) for name in emp_feasible_totals}
+    for day in DAYS:
+        for area in AREAS:
+            for st in range(0, DAY_TICKS):
+                horizon = min(DAY_TICKS, st + 8)
+                pressure = 0.0
+                for tt in range(st, horizon):
+                    pressure += max(0, int(pref_req.get((day, area, tt), 0) or 0) - int(min_req.get((day, area, tt), 0) or 0))
+                    pressure += max(0, int(min_req.get((day, area, tt), 0) or 0) - int(coverage.get((day, area, tt), 0) or 0))
+                later_demand_pressure[(day, area, st, min(DAY_TICKS, st + 2))] = pressure
 
     def add_best_segment(day: str, area: str, st: int, en: int, locked_ok: bool=False, enforce_weekly_cap: bool=True) -> bool:
         nonlocal current_avg_active_wants
@@ -9123,41 +9361,48 @@ class SchedulerApp(tk.Tk):
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
     def _load_brand_images(self):
-        """Load PetroServe branding images if present in ./assets."""
+        """Load branding with unified header/store resolution and safe fallbacks."""
+        self.brand_asset_state = {"header_path": "", "store_path": "", "header_mode": "none", "store_mode": "none"}
         try:
-            candidates = [
-                rel_path("Assets", "header_logo.png"),
-                rel_path("assets", "header_logo.png"),
-                rel_path("assets", "petroserve.png"),
-            ]
-            img_path = next((p for p in candidates if os.path.isfile(p)), "")
-            if not img_path:
-                return
-            if Image is None or ImageTk is None:
-                # Fallback: tkinter PhotoImage (no resize)
-                try:
-                    self.brand_img_header = tk.PhotoImage(file=img_path)
-                    self.brand_img_store = self.brand_img_header
-                except Exception:
-                    return
-                return
-
-            base = Image.open(img_path)
-            self.brand_source_image = base.copy()
-
-            def make(max_px: int):
-                im = base.copy()
-                im.thumbnail((max_px, max_px), Image.LANCZOS)
-                return ImageTk.PhotoImage(im)
-
-            # small header icon + larger store-tab brand
-            self.brand_img_header = make(72)
-            self.brand_img_store = make(320)
+            header_path = resolve_brand_asset_path("header")
+            store_path = resolve_brand_asset_path("store")
+            self.brand_asset_state.update({"header_path": header_path, "store_path": store_path})
+            if header_path:
+                if Image is None or ImageTk is None:
+                    try:
+                        self.brand_img_header = tk.PhotoImage(file=header_path)
+                        self.brand_asset_state["header_mode"] = "tk"
+                    except Exception:
+                        self.brand_img_header = None
+                else:
+                    with Image.open(header_path) as img:
+                        base = img.copy()
+                    self.brand_source_image = base.copy()
+                    hdr = base.copy(); hdr.thumbnail((72, 72), Image.LANCZOS)
+                    self.brand_img_header = ImageTk.PhotoImage(hdr)
+                    self.brand_asset_state["header_mode"] = "pil"
+            if store_path:
+                if Image is None or ImageTk is None:
+                    try:
+                        self.brand_img_store = tk.PhotoImage(file=store_path)
+                        self.brand_asset_state["store_mode"] = "tk"
+                    except Exception:
+                        self.brand_img_store = self.brand_img_header
+                else:
+                    with Image.open(store_path) as img:
+                        self._store_img_original = img.copy()
+                    store_base = self._store_img_original.copy()
+                    store_base.thumbnail((320, 320), Image.LANCZOS)
+                    self.brand_img_store = ImageTk.PhotoImage(store_base)
+                    self.brand_asset_state["store_mode"] = "pil"
+            if self.brand_img_store is None:
+                self.brand_img_store = self.brand_img_header
         except Exception:
-            # branding is optional; never block launch
             self.brand_img_header = None
             self.brand_img_store = None
             self.brand_source_image = None
+            self._store_img_original = None
+            self.brand_asset_state = {"header_path": "", "store_path": "", "header_mode": "none", "store_mode": "none"}
 
     def _brand_fallback_copy(self, variant: str = "default") -> Tuple[str, str]:
         store_info = getattr(self, "model", None)
@@ -9241,29 +9486,23 @@ class SchedulerApp(tk.Tk):
             return None
 
     def _load_store_tab_image(self):
-        self._store_img_original = None
-        if Image is None or ImageTk is None:
-            return
-        try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            candidates = [
-                os.path.join(base_dir, "Assets", "store_logo.png"),
-                os.path.join(base_dir, "assets", "store_logo.png"),
-                os.path.join(base_dir, "assets", "petroserve.png"),
-                os.path.join(base_dir, "petroserve.png"),
-            ]
-            img_path = next((p for p in candidates if os.path.isfile(p)), None)
-            if not img_path:
-                return
-            with Image.open(img_path) as img:
-                self._store_img_original = img.copy()
-        except Exception:
-            self._store_img_original = None
+        if Image is not None and ImageTk is not None and getattr(self, "brand_asset_state", {}).get("store_path") and self._store_img_original is None:
+            try:
+                with Image.open(self.brand_asset_state.get("store_path", "")) as img:
+                    self._store_img_original = img.copy()
+            except Exception:
+                self._store_img_original = None
 
     def _resize_store_tab_image(self, event=None):
         try:
-            if self._store_img_original is None or self._store_img_label is None or self._store_img_container is None:
-                if self._store_img_original is None and self._store_img_label is not None:
+            if self._store_img_label is None or self._store_img_container is None:
+                return
+            if self._store_img_original is None:
+                fallback_photo = getattr(self, "brand_img_store", None)
+                if fallback_photo is not None:
+                    self._store_img_label.configure(image=fallback_photo, text="", style="TLabel")
+                    self._store_img_tk = fallback_photo
+                else:
                     self._render_brand_fallback(self._store_img_label, "store")
                 return
             c_w = int(self._store_img_container.winfo_width())
@@ -9285,7 +9524,7 @@ class SchedulerApp(tk.Tk):
 
             resized = self._store_img_original.resize((dst_w, dst_h), Image.LANCZOS)
             self._store_img_tk = ImageTk.PhotoImage(resized)
-            self._store_img_label.configure(image=self._store_img_tk)
+            self._store_img_label.configure(image=self._store_img_tk, text="", style="TLabel")
             self._store_img_last_size = (dst_w, dst_h)
         except Exception:
             pass
@@ -9648,6 +9887,10 @@ class SchedulerApp(tk.Tk):
             ("btn_open_analyzer", "open_analyzer"),
             ("btn_compare_versions", "compare_versions"),
             ("btn_calloff_simulator", "calloff_simulator"),
+            ("btn_readiness_checklist", "publish_final"),
+            ("btn_labor_cost_review", "manager_report_export"),
+            ("btn_replacement_assistant", "calloff_simulator"),
+            ("btn_historical_suggestions", "save_history"),
             ("btn_print_html", "print_html"),
             ("btn_employee_calendar", "employee_calendar_export"),
             ("btn_manager_report", "manager_report_export"),
@@ -11229,6 +11472,14 @@ class SchedulerApp(tk.Tk):
         self.btn_compare_versions.pack(side="left", padx=8)
         self.btn_calloff_simulator = ttk.Button(trow, text="Call-Off Simulator", command=self._show_calloff_tab)
         self.btn_calloff_simulator.pack(side="left", padx=8)
+        self.btn_readiness_checklist = ttk.Button(trow, text="Publish Readiness Checklist", command=self._open_publish_readiness_dialog)
+        self.btn_readiness_checklist.pack(side="left", padx=8)
+        self.btn_labor_cost_review = ttk.Button(trow, text="Labor Cost Review", command=self._open_labor_cost_review_dialog)
+        self.btn_labor_cost_review.pack(side="left", padx=8)
+        self.btn_replacement_assistant = ttk.Button(trow, text="Assignment Replacement Assistant", command=self._open_replacement_assistant_dialog)
+        self.btn_replacement_assistant.pack(side="left", padx=8)
+        self.btn_historical_suggestions = ttk.Button(trow, text="Historical Suggestions", command=self._open_historical_suggestions_dialog)
+        self.btn_historical_suggestions.pack(side="left", padx=8)
 
         ns_box = ttk.LabelFrame(frm, text="Selected-Week No School Days", style="Panel.TLabelframe")
         ns_box.pack(fill="x", pady=(0, 8))
@@ -11992,6 +12243,7 @@ class SchedulerApp(tk.Tk):
             return
         label = self.current_label or self.label_var.get().strip() or self._default_week_label()
         allow_manual = bool(getattr(self, "refine_allow_manual_unlock_var", tk.BooleanVar(value=False)).get())
+        refine_started = datetime.datetime.now()
         self._set_engine_status("Refine: preparing baseline...", busy=True, pct=5)
         baseline = list(self.current_assignments or [])
 
@@ -12051,7 +12303,9 @@ class SchedulerApp(tk.Tk):
             "post_pref_short": int(new_pref_short),
             "passes": pass_diags,
             "selected_pass_diagnostics": dict(best_diag or {}),
+            "runtime_seconds": round((datetime.datetime.now() - refine_started).total_seconds(), 4),
         }
+        self.current_diagnostics = _set_runtime_metric(self.current_diagnostics, "refine", (datetime.datetime.now() - refine_started).total_seconds(), passes=len(pass_diags))
         self.current_warnings = list(self.current_warnings or [])
         self.current_warnings.append(
             f"Refine completed (manual unlocked edits {'allowed' if allow_manual else 'protected'})."
@@ -12063,6 +12317,112 @@ class SchedulerApp(tk.Tk):
         except Exception:
             pass
         self._set_engine_status("Refine complete", busy=False, pct=100)
+
+    def _selected_assignment_from_output(self) -> Optional[Assignment]:
+        sel = getattr(self, "out_tree", None).selection() if hasattr(self, "out_tree") else ()
+        if not sel:
+            return None
+        vals = self.out_tree.item(sel[0], "values")
+        if not vals or len(vals) < 5:
+            return None
+        day, area, st_s, en_s, emp_name = vals[:5]
+        st = hhmm_to_tick(st_s); en = hhmm_to_tick(en_s)
+        for a in self.current_assignments:
+            if a.day == day and a.area == area and int(a.start_t) == int(st) and int(a.end_t) == int(en) and a.employee_name == emp_name:
+                return a
+        return None
+
+    def _open_publish_readiness_dialog(self):
+        label = self.current_label or self.label_var.get().strip() or self._default_week_label()
+        t0 = datetime.datetime.now()
+        analyzer_findings = self._build_analyzer_findings()
+        payload = build_publish_readiness_checklist(self.model, label, list(self.current_assignments or []), diagnostics=dict(self.current_diagnostics or {}), warnings=list(self.current_warnings or []), analyzer_findings_count=len(analyzer_findings))
+        self.current_diagnostics = _set_runtime_metric(self.current_diagnostics, "publish_readiness_dialog", (datetime.datetime.now() - t0).total_seconds(), status=payload.get("status", "Review"))
+        win = tk.Toplevel(self)
+        win.title("Publish Readiness Checklist")
+        win.geometry("760x620")
+        ttk.Label(win, text="Publish Readiness Checklist", style="Header.TLabel").pack(anchor="w", padx=12, pady=(10, 4))
+        ttk.Label(win, text=f"Status: {payload.get('status', 'Review')}", style="SubHeader.TLabel").pack(anchor="w", padx=12)
+        txt = tk.Text(win, wrap="word", height=20)
+        txt.pack(fill="both", expand=True, padx=12, pady=10)
+        txt.insert("end", f"Hard blockers: {len(payload.get('hard_blockers', []))}\n")
+        txt.insert("end", f"Uncovered minimums: {payload.get('uncovered_minimums', 0)}\nPreferred gaps: {payload.get('preferred_gaps', 0)}\n")
+        txt.insert("end", f"Fragile windows: {payload.get('fragile_windows_count', 0)}\nOverride warnings: {payload.get('override_warnings', 0)}\n")
+        txt.insert("end", f"Labor-cap warnings: {payload.get('labor_cap_warnings', 0)}\nAnalyzer/review findings: {payload.get('analyzer_findings_count', 0)}\n\n")
+        for line in payload.get('readiness', {}).get('headline', []):
+            txt.insert("end", f"• {line}\n")
+        txt.configure(state="disabled")
+        row = ttk.Frame(win)
+        row.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(row, text="Run Analyzer Review", command=self._open_analyzer_popup).pack(side="left")
+        ttk.Button(row, text="Open Heatmap", command=self._open_heatmap_popup).pack(side="left", padx=8)
+        ttk.Button(row, text="Open Compare Versions", command=self._open_changes_popup).pack(side="left", padx=8)
+        if payload.get("publish_ready", False):
+            ttk.Button(row, text="Publish Final", command=self.publish_final).pack(side="right")
+
+    def _open_labor_cost_review_dialog(self):
+        t0 = datetime.datetime.now()
+        summary = _labor_cost_summary(self.model, list(self.current_assignments or []))
+        self.current_diagnostics = _set_runtime_metric(self.current_diagnostics, "labor_cost_review_dialog", (datetime.datetime.now() - t0).total_seconds(), total_hours=round(float(summary.get("total_hours", 0.0)), 2))
+        win = tk.Toplevel(self)
+        win.title("Labor Cost Review")
+        win.geometry("720x560")
+        ttk.Label(win, text="Labor Cost Review", style="Header.TLabel").pack(anchor="w", padx=12, pady=(10, 4))
+        txt = tk.Text(win, wrap="word", height=20)
+        txt.pack(fill="both", expand=True, padx=12, pady=10)
+        txt.insert("end", f"Total scheduled hours: {summary.get('total_hours', 0.0):.1f}\n")
+        txt.insert("end", f"Approx labor load: {summary.get('approx_labor_load', 'Low')}\n")
+        txt.insert("end", f"Overstaff hours: {summary.get('overstaff_hours', 0.0):.1f}\n")
+        txt.insert("end", f"Near-cap indicator ticks: {summary.get('near_cap_indicator_ticks', 0)}\n\nHours by area:\n")
+        for area, hrs in summary.get('hours_by_area', {}).items():
+            txt.insert("end", f"• {area}: {hrs:.1f}\n")
+        txt.insert("end", "\nDaily totals:\n")
+        for day, hrs in summary.get('daily_totals', {}).items():
+            txt.insert("end", f"• {day}: {hrs:.1f}\n")
+        txt.configure(state="disabled")
+
+    def _open_replacement_assistant_dialog(self):
+        target = self._selected_assignment_from_output()
+        if target is None:
+            messagebox.showinfo("Assignment Replacement Assistant", "Select an assignment row in the Schedule Workspace first.")
+            return
+        label = self.current_label or self.label_var.get().strip() or self._default_week_label()
+        t0 = datetime.datetime.now()
+        payload = build_replacement_assistant_candidates(self.model, label, list(self.current_assignments or []), target)
+        self.current_diagnostics = _set_runtime_metric(self.current_diagnostics, "replacement_assistant_dialog", (datetime.datetime.now() - t0).total_seconds(), candidate_count=len(payload.get("candidates", [])))
+        win = tk.Toplevel(self)
+        win.title("Assignment Replacement Assistant")
+        win.geometry("860x560")
+        ttk.Label(win, text=f"Assignment-based replacement options for {target.employee_name} • {target.day} {target.area} {tick_to_hhmm(target.start_t)}-{tick_to_hhmm(target.end_t)}", wraplength=820, style="SubHeader.TLabel").pack(anchor="w", padx=12, pady=(10, 8))
+        txt = tk.Text(win, wrap="word", height=22)
+        txt.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+        for row in payload.get('candidates', []):
+            txt.insert("end", f"• {row['employee']}: {row['explanation']} | likely uncovered ticks after replacement: {row['coverage_impact_ticks']}\n")
+        if payload.get('swap_suggestions'):
+            txt.insert("end", "\nSwap suggestions:\n")
+            for row in payload.get('swap_suggestions', []):
+                txt.insert("end", f"• Swap with {row['swap_with']} ({row['other_area']} ↔ {row['target_area']}) on {row['day']}\n")
+        txt.insert("end", "\nThis assistant is assignment-based only. It is not wired to the call-off simulator context. Use Manual Edit / Quick Swap to apply any change.")
+        txt.configure(state="disabled")
+
+    def _open_historical_suggestions_dialog(self):
+        t0 = datetime.datetime.now()
+        payload = build_historical_suggestions(self.model)
+        self.current_diagnostics = _set_runtime_metric(self.current_diagnostics, "historical_suggestions_dialog", (datetime.datetime.now() - t0).total_seconds(), suggestions=len(payload.get("employee_suggestions", [])))
+        win = tk.Toplevel(self)
+        win.title("Historical Suggestions")
+        win.geometry("760x560")
+        ttk.Label(win, text="Historical Suggestions (advisory only)", style="Header.TLabel").pack(anchor="w", padx=12, pady=(10, 4))
+        txt = tk.Text(win, wrap="word", height=22)
+        txt.pack(fill="both", expand=True, padx=12, pady=10)
+        txt.insert("end", "These suggestions are guidance only. They do not change staffing requirements or the live schedule.\n\n")
+        for row in payload.get('employee_suggestions', []):
+            txt.insert("end", f"• {row['employee']}: {row['summary']}\n")
+        if payload.get('forecast_pressure'):
+            txt.insert("end", "\nForecast pressure windows:\n")
+            for row in payload.get('forecast_pressure', []):
+                txt.insert("end", f"• {row['day']} {row['area']} {tick_to_hhmm(int(row['tick']))}: forecast {row['forecast']:.2f}\n")
+        txt.configure(state="disabled")
 
     def _build_analyzer_findings(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -12253,6 +12613,7 @@ class SchedulerApp(tk.Tk):
 
 
         # P2-4: refresh learned patterns (if enabled)
+        history_refresh_started = datetime.datetime.now()
         try:
             if not _suppress_progress:
                 self._set_engine_status("Loading employee availability...", busy=True)
@@ -12260,6 +12621,7 @@ class SchedulerApp(tk.Tk):
                 self._refresh_learned_patterns()
         except Exception:
             pass
+        history_refresh_seconds = (datetime.datetime.now() - history_refresh_started).total_seconds()
 
         # P2-5: Demand preview before solving (if multipliers differ from 1.0)
         try:
@@ -12289,14 +12651,18 @@ class SchedulerApp(tk.Tk):
                     forecast_used = {}
             if not _suppress_progress:
                 self._set_engine_status("Running solver...", busy=True, pct=55)
+            solver_started = datetime.datetime.now()
             if bool(getattr(self.model.settings, "enable_multi_scenario_generation", True)):
                 assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule_multi_scenario(model_for_generation, label, prev_tick_map=prev_tick_map)
             else:
                 assigns, emp_hours, total_hours, warnings, filled, total_slots, iters_done, restarts_done, diag = generate_schedule(model_for_generation, label, prev_tick_map=prev_tick_map)
+            solver_seconds = (datetime.datetime.now() - solver_started).total_seconds()
             try:
                 diag = dict(diag or {})
                 diag["phase5_demand_forecast"] = forecast_used
                 diag["phase5_demand_forecast_enabled"] = bool(getattr(self.model.settings, "enable_demand_forecast_engine", True))
+                diag = _set_runtime_metric(diag, "history_learning", history_refresh_seconds, enabled=bool(getattr(self.model.settings, "learn_from_history", True)))
+                diag = _set_runtime_metric(diag, "generate_solver", solver_seconds, scenarios=int(diag.get("scenario_count", 1) or 1))
             except Exception:
                 pass
         except Exception as ex:
